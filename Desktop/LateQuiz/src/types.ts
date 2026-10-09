@@ -123,8 +123,14 @@ export interface SubmissionAnswer {
   points: number
   pointsAwarded: number
   isCorrect: boolean | null
-  feedback: string
   requiresReview: boolean
+}
+
+export interface SubmissionPartColumn {
+  partId: string | null
+  title: string
+  position: number
+  possiblePoints: number
 }
 
 export interface Submission {
@@ -145,6 +151,7 @@ export interface Submission {
   earnedPoints: number
   possiblePoints: number
   answers: SubmissionAnswer[]
+  partColumns: SubmissionPartColumn[]
   parts?: PartScore[]
 }
 

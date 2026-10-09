@@ -54,7 +54,7 @@ import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { deleteSubmission, loadAdminSubmissions, reviewSubmission } from './lib/submissions'
 import { sortStudents } from './lib/sorting'
 import { createSubject, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
-import type { AdminView, Notification, Question, Quiz, QuizPart, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, ToastMessage } from './types'
+import type { AdminView, Notification, Question, Quiz, QuizPart, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionPartColumn, ToastMessage } from './types'
 import latequizLogo from '../latequiz.png'
 
 type AuthRoute = 'student' | 'admin'
@@ -774,6 +774,30 @@ function submissionDate(value: string | null) {
   return value ? new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Still in progress'
 }
 
+function submissionFullName(student: Student) {
+  return `${student.lastName}, ${student.firstNames}`
+}
+
+function formatSubmissionPoints(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)))
+}
+
+function submissionPartKey(partId: string | null) {
+  return partId ?? '__general'
+}
+
+function compactPartScore(submission: Submission, part: SubmissionPartColumn) {
+  const score = submission.parts?.find((item) => submissionPartKey(item.partId) === submissionPartKey(part.partId))
+  const possible = score?.possible ?? part.possiblePoints
+  if (!score && !possible) return '—'
+  return `${formatSubmissionPoints(score?.earned ?? 0)} / ${formatSubmissionPoints(possible)}`
+}
+
+function CompactSubmissionTable({ submissions, partColumns, onOpen }: { submissions: Submission[]; partColumns: SubmissionPartColumn[]; onOpen: (submission: Submission) => void }) {
+  const gridTemplateColumns = `minmax(180px, 1.45fr) repeat(${partColumns.length}, minmax(90px, 1fr)) minmax(86px, 0.75fr)`
+  return <div className="submission-compact-scroll"><div className="submission-compact-table" style={{ gridTemplateColumns }}><div className="submission-compact-head" style={{ gridTemplateColumns }}><span>Student</span>{partColumns.map((part) => <span key={submissionPartKey(part.partId)}>{part.title}</span>)}<span>Total</span></div>{submissions.map((submission) => <button className="submission-compact-row" key={submission.id} type="button" style={{ gridTemplateColumns }} onClick={() => onOpen(submission)}><span className="submission-compact-student"><span className="avatar avatar-tiny avatar-mint">{initials(submission.student)}</span><strong>{submissionFullName(submission.student)}</strong></span>{partColumns.map((part) => <span key={submissionPartKey(part.partId)}>{compactPartScore(submission, part)}</span>)}<strong>{formatSubmissionPoints(submission.earnedPoints)} / {formatSubmissionPoints(submission.possiblePoints)}</strong></button>)}</div></div>
+}
+
 function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: ToastMessage) => void }) {
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [filter, setFilter] = useState<'all' | Submission['status']>('all')
@@ -781,6 +805,7 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
   const [quizFilter, setQuizFilter] = useState('all')
   const [selected, setSelected] = useState<Submission | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [compactView, setCompactView] = useState(false)
 
   const refresh = async () => {
     setIsLoading(true)
@@ -794,6 +819,7 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
   }
 
   useEffect(() => { void refresh() }, [])
+  useEffect(() => { if (quizFilter === 'all') setCompactView(false) }, [quizFilter])
 
   const quizOptions = [...new Map(submissions.map((submission) => [submission.quizId, submission.quizTitle])).entries()]
     .sort((left, right) => left[1].localeCompare(right[1], 'en', { sensitivity: 'base' }))
@@ -804,6 +830,13 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
     const matchesSearch = !searchTerm || `${submission.student.firstNames} ${submission.student.lastName} ${submission.student.schoolId} ${submission.quizTitle}`.toLowerCase().includes(searchTerm)
     return matchesStatus && matchesQuiz && matchesSearch
   })
+  const canUseCompactView = quizFilter !== 'all'
+  const compactPartColumns = [...new Map(
+    submissions
+      .filter((submission) => submission.quizId === quizFilter)
+      .flatMap((submission) => submission.partColumns)
+      .map((part) => [submissionPartKey(part.partId), part] as const),
+  ).values()].sort((left, right) => left.position - right.position)
   const filters: Array<{ id: 'all' | Submission['status']; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'needs-review', label: 'Needs review' },
@@ -834,10 +867,11 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
         <div className="submission-filters">
           <div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student or quiz" /></div>
           <label className="submission-quiz-filter"><span className="visually-hidden">Filter by quiz</span><select value={quizFilter} onChange={(event) => setQuizFilter(event.target.value)}><option value="all">All quizzes</option>{quizOptions.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select><ChevronDown size={15} /></label>
+          <button className="button button-secondary submission-layout-toggle" disabled={!canUseCompactView} aria-pressed={compactView} title={canUseCompactView ? 'Toggle compact score columns' : 'Select one quiz to use compact columns'} onClick={() => setCompactView((value) => !value)}>{compactView ? 'Full layout' : 'Compact layout'}</button>
         </div>
       </section>
       <section className="submission-table-card">
-        {isLoading ? <div className="empty-state"><ClipboardCheck size={24} /><strong>Loading submissions...</strong><span>Fetching taken exams from the workspace.</span></div> : filtered.length ? <>
+        {isLoading ? <div className="empty-state"><ClipboardCheck size={24} /><strong>Loading submissions...</strong><span>Fetching taken exams from the workspace.</span></div> : filtered.length ? compactView && canUseCompactView ? <CompactSubmissionTable submissions={filtered} partColumns={compactPartColumns} onOpen={setSelected} /> : <>
           <div className="submission-table-head"><span>Student</span><span>Quiz</span><span>Status</span><span>Submitted</span><span>Score</span><span /></div>
           <div className="submission-table">
             {filtered.map((submission) => <div className="submission-row submission-row-full" key={submission.id}>
@@ -889,7 +923,7 @@ function SubmissionReviewDrawer({ submission, notify, onClose, onSaved, onDelete
   }
 
   const earnedPoints = answers.reduce((sum, answer) => sum + Number(answer.pointsAwarded || 0), 0)
-  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div><div className="student-answer"><span>Student answer</span><strong>{answer.answer || 'No answer submitted'}</strong></div><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked })} /><span>Mark correct</span></label></div><label className="field-label review-feedback-label" htmlFor={`submission-feedback-${answer.questionId}`}>Feedback</label><textarea id={`submission-feedback-${answer.questionId}`} className="form-input review-feedback-input" rows={2} value={answer.feedback} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { feedback: event.target.value })} placeholder="Optional feedback for this answer" /></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
+  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div><div className="student-answer"><span>Answer:</span><strong>{answer.answer || 'No answer submitted'}</strong></div><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked })} /><span>Mark correct</span></label></div></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
 }
 
 function AuthLoadingScreen() {
