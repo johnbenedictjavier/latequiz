@@ -29,6 +29,7 @@ type QuestionRow = {
   question_type: QuestionType
   prompt: string
   points: number
+  answer_key: string | null
   requires_manual_review: boolean
 }
 
@@ -93,6 +94,7 @@ function mapAnswer(question: QuestionRow, answer?: AnswerRow): SubmissionAnswer 
     prompt: question.prompt,
     type: question.question_type,
     answer: answer?.answer_text || answer?.file_path || '',
+    correctAnswer: question.answer_key ?? '',
     points: Number(question.points),
     pointsAwarded: Number(answer?.points_awarded ?? 0),
     isCorrect: answer?.is_correct ?? null,
@@ -132,7 +134,7 @@ export async function loadAdminSubmissions() {
     { data: partRows, error: partError },
     { data: quizPartRows, error: quizPartError },
   ] = await Promise.all([
-    supabase.from('LQ_questions').select('id, quiz_id, position, part_id, question_type, prompt, points, requires_manual_review').in('quiz_id', quizIds),
+    supabase.from('LQ_questions').select('id, quiz_id, position, part_id, question_type, prompt, points, answer_key, requires_manual_review').in('quiz_id', quizIds),
     supabase.from('LQ_answers').select('id, attempt_id, question_id, answer_text, file_path, is_correct, points_awarded').in('attempt_id', attemptIds),
     supabase.from('LQ_attempt_part_scores').select('attempt_id, part_id, part_title, position, points_possible, auto_points, final_points').in('attempt_id', attemptIds).order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, title, position').in('quiz_id', quizIds).order('position'),

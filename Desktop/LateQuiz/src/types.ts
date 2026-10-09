@@ -120,6 +120,7 @@ export interface SubmissionAnswer {
   prompt: string
   type: QuestionType
   answer: string
+  correctAnswer: string
   points: number
   pointsAwarded: number
   isCorrect: boolean | null
