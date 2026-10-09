@@ -112,15 +112,39 @@ export interface ScoreRecord {
   reviewed?: boolean
 }
 
+export type SubmissionStatus = 'needs-review' | 'graded' | 'in-progress'
+
+export interface SubmissionAnswer {
+  id?: string
+  questionId: string
+  prompt: string
+  type: QuestionType
+  answer: string
+  points: number
+  pointsAwarded: number
+  isCorrect: boolean | null
+  feedback: string
+  requiresReview: boolean
+}
+
 export interface Submission {
   id: string
+  quizId: string
   student: Student
   quizTitle: string
-  submittedAt: string
+  quizSubject: string
+  attemptNumber: number
+  startedAt: string
+  submittedAt: string | null
+  autoScore: number
+  manualScore: number
   score: number | null
-  status: 'needs-review' | 'graded' | 'in-progress'
+  status: SubmissionStatus
   manualItems: number
   totalItems: number
+  earnedPoints: number
+  possiblePoints: number
+  answers: SubmissionAnswer[]
   parts?: PartScore[]
 }
 

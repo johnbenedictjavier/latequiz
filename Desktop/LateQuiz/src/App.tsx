@@ -16,7 +16,6 @@ import {
   ClipboardCheck,
   Clock3,
   Code2,
-  Download,
   Eye,
   EyeOff,
   FileText,
@@ -52,8 +51,10 @@ import { changePassword, requestPasswordReset, signInWithAdminUsername, signInWi
 import { importQuizPdf } from './lib/pdfImport'
 import { removeAvatar, signedAvatarUrl, uploadAvatar } from './lib/profile'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
+import { deleteSubmission, loadAdminSubmissions, reviewSubmission } from './lib/submissions'
+import { sortStudents } from './lib/sorting'
 import { createSubject, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
-import type { AdminView, Notification, Question, Quiz, QuizPart, Role, ScoreRecord, Student, StudentView, Subject, ToastMessage } from './types'
+import type { AdminView, Notification, Question, Quiz, QuizPart, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, ToastMessage } from './types'
 import latequizLogo from '../latequiz.png'
 
 type AuthRoute = 'student' | 'admin'
@@ -106,6 +107,7 @@ function useCurrentTime() {
 export default function App() {
   const [authRoute, setAuthRoute] = useState<AuthRoute>(() => new URLSearchParams(window.location.search).get('role') === 'admin' || window.location.pathname.startsWith('/admin') ? 'admin' : 'student')
   const [role, setRole] = useState<Role | null>(null)
+  const [authReady, setAuthReady] = useState(!supabase)
   const [student, setStudent] = useState<Student | null>(null)
   const [mustChangePassword, setMustChangePassword] = useState(false)
   const [studentView, setStudentView] = useState<StudentView>('dashboard')
@@ -139,6 +141,17 @@ export default function App() {
     setMustChangePassword(forcePasswordChange && nextRole === 'student')
   }
 
+  const clearSessionState = () => {
+    setRole(null)
+    setStudent(null)
+    setMustChangePassword(false)
+    setQuizzes([])
+    setScores([])
+    setAdminQuizzes([])
+    setSelectedQuiz(null)
+    setPendingQuiz(null)
+  }
+
   useEffect(() => {
     const onPopState = () => setAuthRoute(new URLSearchParams(window.location.search).get('role') === 'admin' || window.location.pathname.startsWith('/admin') ? 'admin' : 'student')
     window.addEventListener('popstate', onPopState)
@@ -146,26 +159,73 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!supabase || role) return
+    if (!supabase) {
+      setAuthReady(true)
+      return
+    }
+
     const client = supabase
     let active = true
-    client.auth.getSession().then(async ({ data }) => {
-      const user = data.session?.user
-      if (!user) return
-       const { data: profile } = await client.from('LQ_profiles').select('role, school_id, must_change_password, avatar_url').eq('id', user.id).maybeSingle()
-      if (!active || !profile) return
-      if (profile.role === 'admin') {
-        applyLogin('admin')
+    const restoreSession = async () => {
+      const { data: sessionData, error: sessionError } = await client.auth.getSession()
+      if (!active) return
+      const user = sessionData.session?.user
+      if (sessionError || !user) {
+        setAuthReady(true)
         return
       }
-      if (!profile.school_id) return
+
+      const { data: profile, error: profileError } = await client.from('LQ_profiles').select('role, school_id, must_change_password, avatar_url').eq('id', user.id).maybeSingle()
+      if (!active) return
+      if (profileError || !profile) {
+        await client.auth.signOut()
+        if (active) {
+          clearSessionState()
+          setAuthReady(true)
+        }
+        return
+      }
+      if (profile.role === 'admin') {
+        applyLogin('admin')
+        setAuthReady(true)
+        return
+      }
+      if (!profile.school_id) {
+        await client.auth.signOut()
+        if (active) {
+          clearSessionState()
+          setAuthReady(true)
+        }
+        return
+      }
       const { data: rosterRecord } = await client.from('LQ_student_roster').select('school_id, last_name, first_names, is_active').eq('school_id', profile.school_id).maybeSingle()
-      if (!active || !rosterRecord || rosterRecord.is_active === false) return
-       const avatar = await signedAvatarUrl(profile.avatar_url)
-       applyLogin('student', { schoolId: rosterRecord.school_id, lastName: rosterRecord.last_name, firstNames: rosterRecord.first_names, avatarPath: profile.avatar_url ?? undefined, avatar: avatar.url ?? undefined }, Boolean(profile.must_change_password))
+      if (!active) return
+      if (!rosterRecord || rosterRecord.is_active === false) {
+        await client.auth.signOut()
+        if (active) {
+          clearSessionState()
+          setAuthReady(true)
+        }
+        return
+      }
+      const avatar = await signedAvatarUrl(profile.avatar_url)
+      if (!active) return
+      applyLogin('student', { schoolId: rosterRecord.school_id, lastName: rosterRecord.last_name, firstNames: rosterRecord.first_names, avatarPath: profile.avatar_url ?? undefined, avatar: avatar.url ?? undefined }, Boolean(profile.must_change_password))
+      setAuthReady(true)
+    }
+
+    void restoreSession()
+    const { data: authListener } = client.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT' && active) {
+        clearSessionState()
+        setAuthReady(true)
+      }
     })
-    return () => { active = false }
-  }, [role])
+    return () => {
+      active = false
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     if (role !== 'student' || !student || !isSupabaseConfigured) return
@@ -249,17 +309,16 @@ export default function App() {
       return
     }
     setShowLogoutConfirm(false)
-    setRole(null)
-    setStudent(null)
-    setMustChangePassword(false)
-    setQuizzes([])
-    setScores([])
-    setAdminQuizzes([])
+    clearSessionState()
     setAdminView('overview')
     setStudentView('dashboard')
     setSelectedQuiz(null)
     setPendingQuiz(null)
     navigateAuth('student')
+  }
+
+  if (!authReady) {
+    return <><AuthLoadingScreen />{toast && <Toast toast={toast} onClose={() => notify(null)} />}</>
   }
 
   if (!role) {
@@ -687,7 +746,7 @@ function AdminStudentsPage({ focusStudentId, notify }: { focusStudentId: string 
   const refresh = async () => { try { setStudents(await loadAdminRoster()) } catch (error) { notify({ tone: 'warning', title: 'Students could not load', message: (error as Error).message }) } }
   useEffect(() => { void refresh() }, [])
   useEffect(() => { if (focusStudentId) setSearch(focusStudentId) }, [focusStudentId])
-  const filtered = students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase()))
+  const filtered = sortStudents(students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase())))
   const save = async (student: Student) => { setIsSaving(true); const result = await saveStudent(student, editing?.schoolId); setIsSaving(false); if (result.error) return notify({ tone: 'warning', title: 'Student could not be saved', message: result.error.message }); notify({ tone: 'success', title: editing ? 'Student updated' : 'Student added', message: editing ? 'The roster record is up to date.' : `The default password is ${DEFAULT_STUDENT_PASSWORD}.` }); setEditing(null); await refresh() }
   const reset = async (student: Student) => { const result = await resetStudentPassword(student.schoolId); if (result.error) return notify({ tone: 'warning', title: 'Password reset failed', message: result.error.message }); notify({ tone: 'success', title: 'Password reset', message: `${displayName(student)} can sign in with the default password.` }); await refresh() }
   return <div className="content-stack"><section className="page-intro-row admin-page-intro"><div><span className="eyebrow">Roster and access</span><h2>Manage students.</h2><p>Add or edit roster records, then reset a password when a student requests help.</p></div><button className="button button-primary" onClick={() => setEditing({ schoolId: '', firstNames: '', lastName: '', active: true })}><Plus size={17} /> Add student</button></section><section className="table-card roster-table-card"><div className="table-card-heading"><div><span className="eyebrow">Verified roster</span><h3>{students.length} students</h3></div><div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search school ID or name" /></div></div><div className="roster-table"><div className="roster-table-head"><span>Student</span><span>School ID</span><span>Account</span><span>Assignments</span><span /></div>{filtered.map((student) => <div className="roster-row roster-row-five" key={student.schoolId}><button className="roster-student roster-name-button" onClick={() => setEditing(student)}><span className="avatar avatar-tiny avatar-mint">{initials(student)}</span><strong>{displayName(student)}</strong></button><span className="school-id-text">{student.schoolId}</span><span className="assignment-count">{student.accountReady ? student.mustChangePassword ? 'Change required' : 'Ready' : 'Missing account'}</span><span className="assignment-count">{student.assignmentCount ?? 0}</span><button className="button button-small button-secondary" onClick={() => void reset(student)}>Reset password</button></div>)}{!filtered.length && <div className="empty-state"><UsersRound size={24} /><strong>No students found</strong><span>Try another search or add a student.</span></div>}</div></section>{editing && <StudentModal student={editing} isSaving={isSaving} isNew={!students.some((item) => item.schoolId === editing.schoolId)} onClose={() => setEditing(null)} onSave={save} onReset={() => void reset(editing)} />}</div>
@@ -699,8 +758,142 @@ function StudentModal({ student, isNew, isSaving, onClose, onSave, onReset }: { 
   return <div className="modal-overlay" onClick={onClose}><section className="student-modal" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">{isNew ? 'Add student' : 'Student account'}</span><h2>{isNew ? 'Create roster record' : displayName(student)}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close student form"><X size={18} /></button></div><form className="settings-fields" onSubmit={submit}><div><label className="field-label">School ID</label><input className="form-input" value={value.schoolId} disabled={!isNew} onChange={(event) => setValue({ ...value, schoolId: event.target.value })} placeholder="24-00392" /></div><div className="two-field-grid"><div><label className="field-label">First and middle names</label><input className="form-input" value={value.firstNames} onChange={(event) => setValue({ ...value, firstNames: event.target.value })} /></div><div><label className="field-label">Last name</label><input className="form-input" value={value.lastName} onChange={(event) => setValue({ ...value, lastName: event.target.value })} /></div></div><label className="check-row"><input type="checkbox" checked={value.active !== false} onChange={(event) => setValue({ ...value, active: event.target.checked })} /><span className="custom-check"><Check size={12} /></span><span>Account is active</span></label><div className="info-callout"><ShieldCheck size={17} /><span>{isNew ? `New accounts start with ${DEFAULT_STUDENT_PASSWORD} and must change it after first login.` : 'Resetting a password restores the default password and requires a change at next login.'}</span></div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>{!isNew && <button type="button" className="button button-secondary" onClick={onReset}>Reset password</button>}<button type="submit" className="button button-primary" disabled={isSaving}>{isSaving ? 'Saving...' : isNew ? 'Add student' : 'Save changes'} <Check size={15} /></button></div></form></section></div>
 }
 
-function AdminSubmissions() {
-  return <div className="content-stack"><section className="page-intro-row admin-page-intro"><div><span className="eyebrow">Review queue</span><h2>Student submissions.</h2><p>Manual review will appear here as students submit written or uploaded answers.</p></div><button className="button button-secondary" disabled><Download size={15} /> Export results</button></section><section className="submission-table-card empty-state"><ClipboardCheck size={24} /><strong>No submissions to review</strong><span>There are no finalized manual-review attempts yet.</span></section></div>
+function submissionStatusLabel(status: Submission['status']) {
+  if (status === 'needs-review') return 'Needs review'
+  if (status === 'in-progress') return 'In progress'
+  return 'Graded'
+}
+
+function submissionStatusTone(status: Submission['status']): 'success' | 'warning' | 'blue' {
+  if (status === 'needs-review') return 'warning'
+  if (status === 'in-progress') return 'blue'
+  return 'success'
+}
+
+function submissionDate(value: string | null) {
+  return value ? new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Still in progress'
+}
+
+function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: ToastMessage) => void }) {
+  const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [filter, setFilter] = useState<'all' | Submission['status']>('all')
+  const [search, setSearch] = useState('')
+  const [quizFilter, setQuizFilter] = useState('all')
+  const [selected, setSelected] = useState<Submission | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  const refresh = async () => {
+    setIsLoading(true)
+    try {
+      setSubmissions(await loadAdminSubmissions())
+    } catch (error) {
+      notify({ tone: 'warning', title: 'Submissions could not load', message: (error as Error).message })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => { void refresh() }, [])
+
+  const quizOptions = [...new Map(submissions.map((submission) => [submission.quizId, submission.quizTitle])).entries()]
+    .sort((left, right) => left[1].localeCompare(right[1], 'en', { sensitivity: 'base' }))
+  const searchTerm = search.trim().toLowerCase()
+  const filtered = submissions.filter((submission) => {
+    const matchesStatus = filter === 'all' || submission.status === filter
+    const matchesQuiz = quizFilter === 'all' || submission.quizId === quizFilter
+    const matchesSearch = !searchTerm || `${submission.student.firstNames} ${submission.student.lastName} ${submission.student.schoolId} ${submission.quizTitle}`.toLowerCase().includes(searchTerm)
+    return matchesStatus && matchesQuiz && matchesSearch
+  })
+  const filters: Array<{ id: 'all' | Submission['status']; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'needs-review', label: 'Needs review' },
+    { id: 'graded', label: 'Graded' },
+    { id: 'in-progress', label: 'In progress' },
+  ]
+
+  /*
+
+  return <div className="content-stack"><section className="page-intro-row admin-page-intro"><div><span className="eyebrow">Review queue</span><h2>Student submissions.</h2><p>Review every taken exam, correct grading decisions, and keep the record accurate.</p></div><span className="submission-total">{submissions.length} attempt{submissions.length === 1 ? '' : 's'}</span></section><section className="submission-toolbar"><div className="filter-tabs compact-tabs">{filters.map((item) => <button key={item.id} className={filter === item.id ? 'active' : ''} onClick={() => setFilter(item.id)}>{item.label}<span>{item.id === 'all' ? submissions.length : submissions.filter((submission) => submission.status === item.id).length}</span></button>)}</div><div className="submission-filters"><div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student or quiz" /></div><label className="submission-quiz-filter"><span className="visually-hidden">Filter by quiz</span><select value={quizFilter} onChange={(event) => setQuizFilter(event.target.value)}><option value="all">All quizzes</option>{quizOptions.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select><ChevronDown size={15} /></label></div></section><section className="submission-table-card">{isLoading ? <div className="empty-state"><ClipboardCheck size={24} /><strong>Loading submissions...</strong><span>Fetching taken exams from the workspace.</span></div> : filtered.length ? <><div className="submission-table-head"><span>Student</span><span>Quiz</span><span>Status</span><span>Submitted</span><span>Score</span><span /></div><div className="submission-table"><div>{filtered.map((submission) => <div className="submission-row submission-row-full" key={submission.id}><div className="submission-student"><span className="avatar avatar-tiny avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId}</span></div></div><div className="submission-quiz"><strong>{submission.quizTitle}</strong><span>Attempt {submission.attemptNumber} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge><span className="submission-date">{submissionDate(submission.submittedAt)}</span><div className="submission-score"><strong>{submission.score !== null ? `${submission.score}%` : `${submission.autoScore}% auto`}</strong><span>{submission.earnedPoints} / {submission.possiblePoints} pts</span></div><button className="button button-small button-secondary" onClick={() => setSelected(submission)}>{submission.status === 'in-progress' ? 'View' : 'Review'}</button></div>)}</div></> : <div className="empty-state"><ClipboardCheck size={24} /><strong>No submissions found</strong><span>Try a different status, quiz, or search term.</span></div>}</section>{selected && <SubmissionReviewDrawer submission={selected} notify={notify} onClose={() => setSelected(null)} onSaved={async () => { await refresh(); setSelected(null) }} onDeleted={async () => { await refresh(); setSelected(null) }} />}</div>
+}
+
+  */
+  return (
+    <div className="content-stack">
+      <section className="page-intro-row admin-page-intro">
+        <div>
+          <span className="eyebrow">Review queue</span>
+          <h2>Student submissions.</h2>
+          <p>Review every taken exam, correct grading decisions, and keep the record accurate.</p>
+        </div>
+        <span className="submission-total">{submissions.length} attempt{submissions.length === 1 ? '' : 's'}</span>
+      </section>
+      <section className="submission-toolbar">
+        <div className="filter-tabs compact-tabs">
+          {filters.map((item) => <button key={item.id} className={filter === item.id ? 'active' : ''} onClick={() => setFilter(item.id)}>{item.label}<span>{item.id === 'all' ? submissions.length : submissions.filter((submission) => submission.status === item.id).length}</span></button>)}
+        </div>
+        <div className="submission-filters">
+          <div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student or quiz" /></div>
+          <label className="submission-quiz-filter"><span className="visually-hidden">Filter by quiz</span><select value={quizFilter} onChange={(event) => setQuizFilter(event.target.value)}><option value="all">All quizzes</option>{quizOptions.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select><ChevronDown size={15} /></label>
+        </div>
+      </section>
+      <section className="submission-table-card">
+        {isLoading ? <div className="empty-state"><ClipboardCheck size={24} /><strong>Loading submissions...</strong><span>Fetching taken exams from the workspace.</span></div> : filtered.length ? <>
+          <div className="submission-table-head"><span>Student</span><span>Quiz</span><span>Status</span><span>Submitted</span><span>Score</span><span /></div>
+          <div className="submission-table">
+            {filtered.map((submission) => <div className="submission-row submission-row-full" key={submission.id}>
+              <div className="submission-student"><span className="avatar avatar-tiny avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId}</span></div></div>
+              <div className="submission-quiz"><strong>{submission.quizTitle}</strong><span>Attempt {submission.attemptNumber} · {submission.quizSubject}</span></div>
+              <StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge>
+              <span className="submission-date">{submissionDate(submission.submittedAt)}</span>
+              <div className="submission-score"><strong>{submission.score !== null ? `${submission.score}%` : `${submission.autoScore}% auto`}</strong><span>{submission.earnedPoints} / {submission.possiblePoints} pts</span></div>
+              <button className="button button-small button-secondary" onClick={() => setSelected(submission)}>{submission.status === 'in-progress' ? 'View' : 'Review'}</button>
+            </div>)}
+          </div>
+        </> : <div className="empty-state"><ClipboardCheck size={24} /><strong>No submissions found</strong><span>Try a different status, quiz, or search term.</span></div>}
+      </section>
+      {selected && <SubmissionReviewDrawer submission={selected} notify={notify} onClose={() => setSelected(null)} onSaved={async () => { await refresh(); setSelected(null) }} onDeleted={async () => { await refresh(); setSelected(null) }} />}
+    </div>
+  )
+}
+
+function SubmissionReviewDrawer({ submission, notify, onClose, onSaved, onDeleted }: { submission: Submission; notify: (toast: ToastMessage) => void; onClose: () => void; onSaved: () => Promise<void>; onDeleted: () => Promise<void> }) {
+  const [answers, setAnswers] = useState<SubmissionAnswer[]>(submission.answers)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const canGrade = submission.status !== 'in-progress'
+
+  useEffect(() => setAnswers(submission.answers), [submission.id, submission.answers])
+
+  const updateAnswer = (questionId: string, patch: Partial<SubmissionAnswer>) => {
+    setAnswers((current) => current.map((answer) => answer.questionId === questionId ? { ...answer, ...patch } : answer))
+  }
+
+  const save = async () => {
+    setIsSaving(true)
+    const result = await reviewSubmission(submission.id, answers)
+    setIsSaving(false)
+    if (result.error) return notify({ tone: 'warning', title: 'Submission could not be saved', message: result.error.message })
+    notify({ tone: 'success', title: 'Submission grading updated', message: 'The final score and part scores were recalculated.' })
+    await onSaved()
+  }
+
+  const remove = async () => {
+    setIsDeleting(true)
+    const result = await deleteSubmission(submission.id)
+    setIsDeleting(false)
+    if (result.error) return notify({ tone: 'warning', title: 'Submission could not be deleted', message: result.error.message })
+    setConfirmDelete(false)
+    notify({ tone: 'success', title: 'Submission deleted', message: 'The attempt and its answers were removed.' })
+    await onDeleted()
+  }
+
+  const earnedPoints = answers.reduce((sum, answer) => sum + Number(answer.pointsAwarded || 0), 0)
+  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div><div className="student-answer"><span>Student answer</span><strong>{answer.answer || 'No answer submitted'}</strong></div><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked })} /><span>Mark correct</span></label></div><label className="field-label review-feedback-label" htmlFor={`submission-feedback-${answer.questionId}`}>Feedback</label><textarea id={`submission-feedback-${answer.questionId}`} className="form-input review-feedback-input" rows={2} value={answer.feedback} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { feedback: event.target.value })} placeholder="Optional feedback for this answer" /></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
+}
+
+function AuthLoadingScreen() {
+  return <main className="auth-loading-screen" aria-busy="true"><Brand /><span>Restoring your workspace...</span></main>
 }
 
 function NotificationCenter({ notifications, unread, onOpen }: { notifications: Notification[]; unread: number; onOpen: (notification: Notification) => void }) {
@@ -881,7 +1074,8 @@ function StudentQuizzesPage({ quizzes, onOpenQuiz }: { quizzes: Quiz[]; onOpenQu
 function StudentQuizCardV2({ quiz, onOpen }: { quiz: Quiz; onOpen: (quiz: Quiz) => void }) {
   const locked = quiz.status === 'locked'
   const complete = quiz.status === 'completed'
-  return <article className={`quiz-card ${locked ? 'quiz-card-locked' : ''}`}><div className="quiz-card-icon"><BookOpen size={19} /></div><div className="quiz-card-content"><div className="quiz-card-meta"><span>{quiz.subject}</span>{complete ? <StatusBadge tone="success">Completed</StatusBadge> : locked ? <StatusBadge tone="neutral" icon={<LockKeyhole size={11} />}>Not assigned</StatusBadge> : <StatusBadge tone="warning">Ready</StatusBadge>}</div><h3>{quiz.title}</h3><div className="quiz-card-details"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span></div></div>{complete && quiz.earnedPoints !== undefined && quiz.possiblePoints !== undefined && <div className="card-score"><strong>{quiz.earnedPoints} / {quiz.possiblePoints}</strong><span>points</span></div>}<button className={`icon-button card-arrow ${locked ? 'is-locked' : ''}`} onClick={() => onOpen(quiz)} aria-label={locked ? 'Quiz not assigned' : `Open ${quiz.title}`}>{locked ? <LockKeyhole size={17} /> : <ArrowUpRight size={18} />}</button></article>
+  const awaitingReview = quiz.status === 'in-review'
+  return <article className={`quiz-card ${locked ? 'quiz-card-locked' : ''}`}><div className="quiz-card-icon"><BookOpen size={19} /></div><div className="quiz-card-content"><div className="quiz-card-meta"><span>{quiz.subject}</span>{complete ? <StatusBadge tone="success">Completed</StatusBadge> : awaitingReview ? <StatusBadge tone="warning">Awaiting review</StatusBadge> : locked ? <StatusBadge tone="neutral" icon={<LockKeyhole size={11} />}>Not assigned</StatusBadge> : <StatusBadge tone="warning">Ready</StatusBadge>}</div><h3>{quiz.title}</h3><div className="quiz-card-details"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span></div></div>{complete && <div className="card-score"><strong>{quiz.score !== undefined ? `${quiz.score}%` : quiz.earnedPoints !== undefined && quiz.possiblePoints !== undefined ? `${quiz.earnedPoints} / ${quiz.possiblePoints}` : '--'}</strong><span>{quiz.score !== undefined ? `${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts` : 'score'}</span></div>}<button className={`icon-button card-arrow ${locked ? 'is-locked' : ''}`} onClick={() => onOpen(quiz)} aria-label={locked ? 'Quiz not assigned' : `Open ${quiz.title}`}>{locked ? <LockKeyhole size={17} /> : <ArrowUpRight size={18} />}</button></article>
 }
 
 function StudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace, notify }: { student: Student; schoolId: string; quiz: Quiz; onExit: () => void; onRefreshWorkspace: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
@@ -1082,7 +1276,7 @@ function AssignQuizModal({ quiz, onClose, onSaved, notify }: { quiz: Quiz; onClo
       setIsLoaded(true)
     }).catch((error: Error) => notify({ tone: 'warning', title: 'Assignment data could not load', message: error.message }))
   }, [quiz.id, notify])
-  const visible = students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase()) && student.active !== false)
+  const visible = sortStudents(students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase()) && student.active !== false))
   const allSelected = visible.length > 0 && visible.every((student) => selected.includes(student.schoolId))
   const toggleAll = () => setSelected(allSelected ? selected.filter((id) => !visible.some((student) => student.schoolId === id)) : [...new Set([...selected, ...visible.map((student) => student.schoolId)])])
   const save = async () => {

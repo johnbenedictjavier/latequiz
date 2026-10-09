@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { sortStudents } from './sorting'
 import type { Notification, PartScore, Question, Quiz, QuizPart, ScoreRecord, Student, Subject } from '../types'
 
 type QuizRow = {
@@ -303,22 +304,22 @@ export async function loadAdminQuizzes() {
 
 export async function loadRoster() {
   if (!supabase) return null
-  const { data, error } = await supabase.from('LQ_student_roster').select('school_id, last_name, first_names, is_active, auth_user_id, must_change_password').eq('is_active', true).order('school_id')
+  const { data, error } = await supabase.from('LQ_student_roster').select('school_id, last_name, first_names, is_active, auth_user_id, must_change_password').eq('is_active', true).order('last_name').order('first_names')
   if (error) throw error
-  return (data ?? []).map((student) => ({
+  return sortStudents((data ?? []).map((student) => ({
     schoolId: student.school_id,
     lastName: student.last_name,
     firstNames: student.first_names,
     active: student.is_active,
     accountReady: Boolean(student.auth_user_id),
     mustChangePassword: student.must_change_password,
-  })) as Student[]
+  })) as Student[])
 }
 
 export async function loadAdminRoster() {
   if (!supabase) return [] as Student[]
   const [{ data, error }, { data: assignments, error: assignmentError }] = await Promise.all([
-    supabase.from('LQ_student_roster').select('school_id, last_name, first_names, is_active, auth_user_id, must_change_password').order('school_id'),
+    supabase.from('LQ_student_roster').select('school_id, last_name, first_names, is_active, auth_user_id, must_change_password').order('last_name').order('first_names'),
     supabase.from('LQ_quiz_assignments').select('school_id, is_active'),
   ])
   if (error) throw error
@@ -327,7 +328,7 @@ export async function loadAdminRoster() {
   for (const assignment of assignments ?? []) {
     if (assignment.is_active !== false) assignmentCounts.set(assignment.school_id, (assignmentCounts.get(assignment.school_id) ?? 0) + 1)
   }
-  return (data ?? []).map((student) => ({
+  return sortStudents((data ?? []).map((student) => ({
     schoolId: student.school_id,
     lastName: student.last_name,
     firstNames: student.first_names,
@@ -335,7 +336,7 @@ export async function loadAdminRoster() {
     accountReady: Boolean(student.auth_user_id),
     mustChangePassword: student.must_change_password,
     assignmentCount: assignmentCounts.get(student.school_id) ?? 0,
-  })) as Student[]
+  })) as Student[])
 }
 
 export async function loadSubjects() {
