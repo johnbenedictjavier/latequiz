@@ -66,7 +66,7 @@ export async function requestPasswordReset(schoolId: string) {
 }
 
 export async function signOut() {
-  if (supabase) {
-    await supabase.auth.signOut()
-  }
+  if (!supabase) return { error: null }
+  const { error } = await supabase.auth.signOut()
+  return { error }
 }

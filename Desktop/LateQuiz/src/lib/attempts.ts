@@ -3,6 +3,8 @@ import type { PartScore, Question } from '../types'
 
 export type AttemptSubmissionResult = {
   auto_score: number
+  earned_points: number
+  possible_points: number
   manual_review: boolean
   manual_items: number
   expired: boolean
@@ -80,6 +82,8 @@ export async function submitAttempt(attemptId: string) {
   if (!supabase) return { error: null }
   const { data, error } = await supabase.functions.invoke('submit-attempt', { body: { attempt_id: attemptId } })
   const raw = data as (Omit<AttemptSubmissionResult, 'part_scores'> & {
+    earned_points?: number
+    possible_points?: number
     part_scores?: Array<{ part_id: string | null; title: string; position: number; earned: number; possible: number; percentage: number; pending_review?: boolean }>
   }) | null
   const normalized = raw ? {

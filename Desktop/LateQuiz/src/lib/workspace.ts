@@ -143,7 +143,7 @@ export async function loadStudentWorkspace(schoolId: string) {
   if (partError) throw partError
   if (attemptError) throw attemptError
 
-  const attempts = attemptRows ?? []
+  const attempts = (attemptRows ?? []).filter((attempt) => attempt.status !== 'cancelled')
   const attemptIds = attempts.map((attempt) => attempt.id)
   const { data: answerRows, error: answerError } = attemptIds.length
     ? await supabase.from('LQ_answers').select('attempt_id, question_id, answer_text, file_path').in('attempt_id', attemptIds)
@@ -198,6 +198,9 @@ export async function loadStudentWorkspace(schoolId: string) {
     const isSubmitted = attempt?.status === 'submitted' || attempt?.status === 'reviewed' || attempt?.status === 'expired'
     const hasFinalScore = attempt?.final_score !== null && attempt?.final_score !== undefined
     const score = attempt ? Number(attempt.final_score ?? attempt.auto_score ?? 0) : undefined
+    const partScores = attempt ? partScoresByAttempt.get(attempt.id) ?? [] : []
+    const possiblePoints = partScores.reduce((sum, part) => sum + part.possible, 0) || questions.reduce((sum, question) => sum + question.points, 0)
+    const earnedPoints = partScores.reduce((sum, part) => sum + part.earned, 0)
     return {
       id: row.id,
       title: row.title,
@@ -211,6 +214,8 @@ export async function loadStudentWorkspace(schoolId: string) {
       progress: attempt ? Math.round(((answersByAttempt.get(attempt.id) ?? 0) / Math.max(questions.length, 1)) * 100) : 0,
       score,
       passingScore: Number(row.passing_score),
+      earnedPoints: attempt ? earnedPoints : undefined,
+      possiblePoints: attempt ? possiblePoints : questions.reduce((sum, question) => sum + question.points, 0),
       questionsList: questions.map((question) => ({
         ...question,
         response: attempt ? answerTextByAttempt.get(attempt.id)?.get(question.id) : undefined,

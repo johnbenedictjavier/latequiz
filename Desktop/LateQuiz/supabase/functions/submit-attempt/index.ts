@@ -40,12 +40,21 @@ Deno.serve(async (request) => {
   const serviceClient = createClient(supabaseUrl, serviceRoleKey)
   const { data: attempt, error: attemptError } = await serviceClient
     .from('LQ_attempts')
-    .select('id, quiz_id, auth_user_id, expires_at, status')
+    .select('id, assignment_id, quiz_id, school_id, auth_user_id, expires_at, status')
     .eq('id', body.attempt_id)
     .maybeSingle()
   if (attemptError || !attempt) return response({ error: 'Attempt not found' }, 404)
   if (attempt.auth_user_id !== userData.user.id) return response({ error: 'This attempt does not belong to you' }, 403)
   if (attempt.status !== 'in_progress') return response({ error: 'Attempt has already been submitted' }, 409)
+
+  const [{ data: assignment, error: assignmentError }, { data: quiz, error: quizError }] = await Promise.all([
+    serviceClient.from('LQ_quiz_assignments').select('id, is_active, quiz_id, school_id').eq('id', attempt.assignment_id).maybeSingle(),
+    serviceClient.from('LQ_quizzes').select('id, status').eq('id', attempt.quiz_id).maybeSingle(),
+  ])
+  if (assignmentError || quizError) return response({ error: 'Could not validate the quiz assignment' }, 500)
+  if (!assignment || assignment.is_active !== true || assignment.quiz_id !== attempt.quiz_id || assignment.school_id !== attempt.school_id || !quiz || quiz.status !== 'published') {
+    return response({ error: 'This quiz assignment is no longer active' }, 409)
+  }
 
   const expired = new Date(attempt.expires_at).getTime() <= Date.now()
   const [{ data: questions, error: questionsError }, { data: answers, error: answersError }, { data: parts, error: partsError }] = await Promise.all([
@@ -135,6 +144,8 @@ Deno.serve(async (request) => {
 
   return response({
     auto_score: autoScore,
+    earned_points: awarded,
+    possible_points: total,
     manual_review: manualReview,
     manual_items: manualItems,
     expired,

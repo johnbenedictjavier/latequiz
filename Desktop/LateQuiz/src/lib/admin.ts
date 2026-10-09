@@ -168,21 +168,28 @@ export async function saveQuiz(input: SaveQuizInput) {
 
 export async function assignQuiz(quizId: string, schoolIds: string[], attemptLimit: number) {
   if (!supabase) return { error: new Error('Supabase is not configured.') }
-  const { data: userData, error: userError } = await supabase.auth.getUser()
-  if (userError || !userData.user) return { error: userError ?? new Error('Session expired.') }
-  if (!schoolIds.length) return { error: new Error('Select at least one student.') }
+  const { data, error } = await supabase.rpc('LQ_sync_quiz_assignments', {
+    p_quiz_id: quizId,
+    p_school_ids: schoolIds,
+    p_attempt_limit: Math.max(1, Math.floor(attemptLimit)),
+  })
+  return { data, error }
+}
 
-  const rows = schoolIds.map((schoolId) => ({
-    quiz_id: quizId,
-    school_id: schoolId,
-    attempt_limit: Math.max(1, Math.floor(attemptLimit)),
-    assigned_by: userData.user.id,
-    is_active: true,
-  }))
-  const { error } = await supabase
+export async function loadQuizAssignments(quizId: string) {
+  if (!supabase) return { data: [], error: new Error('Supabase is not configured.') }
+  const { data, error } = await supabase
     .from('LQ_quiz_assignments')
-    .upsert(rows, { onConflict: 'quiz_id,school_id' })
-  return { error }
+    .select('school_id, attempt_limit')
+    .eq('quiz_id', quizId)
+    .eq('is_active', true)
+  return { data: data ?? [], error }
+}
+
+export async function deleteQuiz(quizId: string) {
+  if (!supabase) return { result: null, error: new Error('Supabase is not configured.') }
+  const { data, error } = await supabase.rpc('LQ_delete_quiz', { p_quiz_id: quizId })
+  return { result: data as 'deleted' | 'archived' | null, error }
 }
 
 export async function setQuizStatus(quizId: string, status: 'draft' | 'published' | 'archived') {

@@ -2,6 +2,7 @@ export type Role = 'student' | 'admin'
 
 export type StudentView =
   | 'dashboard'
+  | 'quizzes'
   | 'quiz'
   | 'scores'
   | 'account'
@@ -21,6 +22,7 @@ export interface Student {
   lastName: string
   firstNames: string
   avatar?: string
+  avatarPath?: string
   active?: boolean
   accountReady?: boolean
   mustChangePassword?: boolean
@@ -88,6 +90,8 @@ export interface Quiz {
   passingScore: number
   questionsList?: Question[]
   parts?: QuizPart[]
+  earnedPoints?: number
+  possiblePoints?: number
   assignedCount?: number
   answeredCount?: number
   attemptLimit?: number

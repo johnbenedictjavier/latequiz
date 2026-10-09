@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open `/login` for students or `/admin/login` for administrators.
+Open `/login` for students. Administrators use the Admin login switch on the same page.
 
 ## Supabase setup
 
@@ -24,6 +24,8 @@ Open `/login` for students or `/admin/login` for administrators.
 7. Add that user to `LQ_profiles` with `role = 'admin'`.
 
 The student-facing forms do not ask for email. Supabase uses a hidden internal identifier only to support Auth password sessions. New and reset student accounts use `LQ@Architect2026` and must change it after signing in.
+
+Student profile pictures are stored in the private `lq-avatars` bucket. Quiz assignments can be synchronized from the assignment modal, including unassigning students. Draft quizzes without attempts can be deleted; quizzes with attempt history are archived to preserve scores.
 
 All application tables use the required `LQ_` prefix. Quiz access is controlled by `LQ_quiz_assignments.school_id`, so assignments can exist before students activate their accounts.
 
