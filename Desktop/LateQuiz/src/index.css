@@ -1269,3 +1269,87 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
 }
+
+/* Responsive quiz cards, score reports, and save feedback */
+.quiz-card,
+.admin-quiz-card { min-width: 0; }
+.quiz-card-meta,
+.admin-quiz-card-copy .quiz-card-meta { flex-wrap: wrap; min-width: 0; }
+.quiz-card-meta > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.quiz-card h3,
+.quiz-card-description,
+.admin-quiz-card-copy h3,
+.admin-quiz-card-copy p { overflow-wrap: anywhere; }
+.quiz-card-details,
+.admin-quiz-card-stats { align-items: flex-start; flex-wrap: wrap; row-gap: 7px; }
+.quiz-card-details span,
+.admin-quiz-card-stats span { line-height: 1.35; }
+.admin-quiz-card-copy p { overflow-wrap: anywhere; }
+.admin-quiz-card-actions .button { min-width: 0; }
+.admin-quiz-card.is-status-changing { box-shadow: 0 0 0 3px rgba(81, 70, 217, 0.08), var(--shadow-sm); }
+
+.builder-actions .button:nth-of-type(2):disabled,
+.builder-actions .button:nth-of-type(3):disabled { position: relative; cursor: wait; animation: saving-button-pulse 1.4s ease-in-out infinite; }
+.builder-actions .button:nth-of-type(2):disabled::after,
+.builder-actions .button:nth-of-type(3):disabled::after { width: 11px; height: 11px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; content: ''; animation: spin 0.8s linear infinite; }
+@keyframes saving-button-pulse { 0%, 100% { box-shadow: 0 5px 14px rgba(81, 70, 217, 0.08); } 50% { box-shadow: 0 8px 21px rgba(81, 70, 217, 0.2); } }
+
+.submission-report-modal { width: min(1080px, 100%); max-height: min(820px, calc(100vh - 40px)); overflow: hidden; padding: 25px; border: 1px solid #e2e4ee; border-radius: 17px; background: #fff; box-shadow: 0 25px 60px rgba(24, 31, 69, 0.2); animation: modal-in 0.22s ease-out; }
+.submission-report-modal .modal-heading { margin-bottom: 14px; }
+.submission-report-modal .modal-heading h2 { margin-top: 7px; color: var(--ink); font-size: 23px; }
+.submission-report-modal .modal-heading p { margin-top: 7px; color: #8b93a6; font-size: 11px; }
+.submission-report-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px; }
+.submission-report-summary span { padding: 7px 9px; border-radius: 7px; color: #7d879c; background: #f5f6fa; font-size: 9px; }
+.submission-report-summary strong { margin-right: 3px; color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; }
+.submission-report-table-wrap { overflow: auto; border: 1px solid #e8eaf0; border-radius: 12px; }
+.submission-report-head,
+.submission-report-row { display: grid; align-items: center; gap: 12px; min-width: 760px; }
+.submission-report-head { padding: 12px 15px 10px; border-bottom: 1px solid #eff0f4; color: #9aa2b3; font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.submission-report-head span:not(:first-child) { text-align: right; }
+.submission-report-head small { display: block; margin-top: 4px; color: #b0b6c4; font-size: 8px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.submission-report-row { padding: 12px 15px; border-bottom: 1px solid #f0f1f5; color: #657089; font-size: 10px; }
+.submission-report-row:last-child { border-bottom: 0; }
+.submission-report-row:hover { background: #fbfbff; }
+.submission-report-student,
+.submission-report-total { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.submission-report-student strong { overflow-wrap: anywhere; color: #59627c; font-size: 10px; }
+.submission-report-student small,
+.submission-report-total small { color: #9da5b5; font-size: 8px; }
+.submission-report-cell { color: #68728b; text-align: right; white-space: nowrap; }
+.submission-report-total { align-items: flex-end; }
+.submission-report-total strong { color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; }
+.submission-report-total.is-pending strong { color: #a0a7b7; font-family: 'DM Sans', sans-serif; font-size: 10px; }
+
+@media (max-width: 650px) {
+  .quiz-card { display: grid; grid-template-areas: 'icon content arrow' 'icon content score'; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px 12px; min-height: 0 !important; }
+  .quiz-card-icon { grid-area: icon; }
+  .quiz-card-content { grid-area: content; }
+  .quiz-card .card-arrow { grid-area: arrow; margin-left: 0; }
+  .quiz-card .card-score { grid-area: score; align-items: flex-end; margin: 0; }
+  .quiz-card-details { padding-top: 10px; }
+  .admin-quiz-card { min-height: 0; }
+  .admin-quiz-card-actions { flex-wrap: wrap; }
+  .admin-quiz-card-actions .button { flex: 1 1 130px; }
+  .submission-report-modal { max-height: calc(100vh - 30px); padding: 19px; }
+  .submission-report-modal .modal-heading h2 { font-size: 20px; }
+  .submission-report-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .submission-report-summary span { min-width: 0; padding: 7px 5px; font-size: 8px; text-align: center; }
+  .submission-report-summary strong { display: block; margin: 0 0 2px; font-size: 12px; }
+  .submission-report-table-wrap { overflow: visible; border: 0; }
+  .submission-report-head { display: none; }
+  .submission-report-body { display: flex; flex-direction: column; gap: 8px; }
+  .submission-report-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; min-width: 0; padding: 12px; border: 1px solid #e8eaf0; border-radius: 11px; }
+  .submission-report-student,
+  .submission-report-total { grid-column: 1 / -1; }
+  .submission-report-student { padding-bottom: 8px; border-bottom: 1px solid #eff0f4; }
+  .submission-report-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 7px 0; border-bottom: 1px solid #f3f4f7; text-align: left; }
+  .submission-report-part::before { color: #9da5b5; content: attr(data-label); font-size: 8px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  .submission-report-total { align-items: flex-start; padding-top: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .builder-actions .button:nth-of-type(2):disabled,
+  .builder-actions .button:nth-of-type(3):disabled,
+  .builder-actions .button:nth-of-type(2):disabled::after,
+  .builder-actions .button:nth-of-type(3):disabled::after { animation: none; }
+}

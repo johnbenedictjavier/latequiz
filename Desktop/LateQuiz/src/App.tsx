@@ -18,7 +18,6 @@ import {
   Code2,
   Eye,
   EyeOff,
-  Download,
   FileText,
   FileUp,
   FolderKanban,
@@ -57,7 +56,6 @@ import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { deleteSubmission, loadAdminSubmissions, reviewSubmission } from './lib/submissions'
 import { sortStudents } from './lib/sorting'
 import { createSubject, loadAdminAssignments, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
-import { exportSubmissionReportPdf } from './lib/submissionReport'
 import type { AdminView, Notification, Question, Quiz, QuizPart, QuizReporter, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionAssignment, SubmissionDashboardCategory, SubmissionPartColumn, ToastMessage } from './types'
 import latequizLogo from '../latequiz.png'
 
@@ -834,6 +832,20 @@ function compactPartScore(submission: Submission, part: SubmissionPartColumn) {
   return `${formatSubmissionPoints(score?.earned ?? 0)} / ${formatSubmissionPoints(possible)}`
 }
 
+function submissionReportColumns(quiz: Quiz, submissions: Submission[]) {
+  const quizColumns: SubmissionPartColumn[] = (quiz.parts ?? []).map((part) => ({
+    partId: part.id,
+    title: part.title,
+    position: part.position,
+    possiblePoints: part.questions.reduce((sum, question) => sum + Number(question.points || 0), 0),
+  }))
+  const generalPoints = (quiz.questionsList ?? []).filter((question) => !question.partId).reduce((sum, question) => sum + Number(question.points || 0), 0)
+  if (generalPoints) quizColumns.push({ partId: null, title: 'General', position: quizColumns.length + 1, possiblePoints: generalPoints })
+  if (quizColumns.length) return quizColumns.sort((left, right) => left.position - right.position)
+  const submissionColumns = submissions.find((submission) => submission.partColumns.length)?.partColumns ?? []
+  return submissionColumns.length ? [...submissionColumns].sort((left, right) => left.position - right.position) : [{ partId: null, title: 'Total', position: 1, possiblePoints: quiz.points }]
+}
+
 type SubmissionDashboardEntry = {
   student: Student
   quizTitle: string
@@ -858,6 +870,23 @@ function SubmissionDashboardModal({ category, entries, onClose }: { category: Su
   return <div className="modal-overlay" onClick={onClose}><section className="submission-status-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Submission dashboard</span><h2>{labels[category]}</h2><p>{entries.length} record{entries.length === 1 ? '' : 's'} in the selected quiz scope.</p></div><button className="icon-button" onClick={onClose} aria-label="Close student list"><X size={18} /></button></div><div className="submission-status-list">{entries.length ? entries.map((entry) => <div className="submission-status-row" key={`${entry.quizTitle}-${entry.student.schoolId}-${entry.submission?.id ?? category}`}><StudentAvatar student={entry.student} className="avatar avatar-tiny avatar-mint" /><div><strong>{displayName(entry.student)}</strong><span>{entry.student.schoolId} · {entry.quizTitle}</span></div>{entry.submission ? <div className="submission-status-row-meta"><span>{entry.submission.score !== null ? `${formatSubmissionPoints(entry.submission.earnedPoints)} / ${formatSubmissionPoints(entry.submission.possiblePoints)} pts` : submissionStatusLabel(entry.submission.status)}</span><small>{formatDuration(entry.submission.timeTakenSeconds)}</small></div> : <StatusBadge tone="neutral">Not started</StatusBadge>}</div>) : <div className="empty-state"><UsersRound size={22} /><strong>No students in this category</strong><span>Choose another quiz or dashboard filter.</span></div>}</div><div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Close</button></div></section></div>
 }
 
+function SubmissionReportModal({ quiz, entries, onClose }: { quiz: Quiz; entries: SubmissionDashboardEntry[]; onClose: () => void }) {
+  const submissions = entries.flatMap((entry) => entry.submission ? [entry.submission] : [])
+  const columns = submissionReportColumns(quiz, submissions)
+  const gridTemplateColumns = `minmax(190px, 1.4fr) repeat(${columns.length}, minmax(90px, 1fr)) minmax(135px, 1.1fr)`
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  const activeSubmissions = submissions.filter((submission) => submission.status !== 'in-progress')
+  return <div className="modal-overlay" onClick={onClose}><section className="submission-report-modal" role="dialog" aria-modal="true" aria-labelledby="submission-report-title" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Score report</span><h2 id="submission-report-title">{quiz.title}</h2><p>Part scores and totals for the selected quiz.</p></div><button className="icon-button" onClick={onClose} aria-label="Close score report"><X size={18} /></button></div><div className="submission-report-summary"><span><strong>{entries.length}</strong> assigned</span><span><strong>{activeSubmissions.length}</strong> submitted</span><span><strong>{Math.max(entries.length - submissions.length, 0)}</strong> not started</span></div><div className="submission-report-table-wrap"><div className="submission-report-head" style={{ gridTemplateColumns }}><span>Student</span>{columns.map((column) => <span key={`${column.partId ?? 'general'}-${column.position}`}>{column.title}<small>{formatSubmissionPoints(column.possiblePoints)} pts</small></span>)}<span>Total score</span></div><div className="submission-report-body">{entries.length ? entries.map((entry) => { const submission = entry.submission; return <div className="submission-report-row" style={{ gridTemplateColumns }} key={`${entry.student.schoolId}-${entry.quizTitle}`}><div className="submission-report-student"><strong>{submissionFullName(entry.student)}</strong><small>{entry.student.schoolId}</small></div>{columns.map((column) => <span className="submission-report-cell submission-report-part" data-label={column.title} key={`${entry.student.schoolId}-${column.partId ?? 'general'}`}>{submission ? compactPartScore(submission, column) : '—'}</span>)}<div className={`submission-report-total ${submission ? '' : 'is-pending'}`}><strong>{submission ? `${formatSubmissionPoints(submission.earnedPoints)} / ${formatSubmissionPoints(submission.possiblePoints)}` : 'Not started'}</strong><small>{submission ? submission.score !== null ? `${submission.score}%` : submissionStatusLabel(submission.status) : 'No submission yet'}</small></div></div> }) : <div className="empty-state"><ClipboardCheck size={22} /><strong>No assigned students</strong><span>Assign students to this quiz to build a score report.</span></div>}</div></div><div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Close</button></div></section></div>
+}
+
 function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast: ToastMessage) => void }) {
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [assignments, setAssignments] = useState<SubmissionAssignment[]>([])
@@ -868,6 +897,7 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
   const [selected, setSelected] = useState<Submission | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [dashboardCategory, setDashboardCategory] = useState<SubmissionDashboardCategory | null>(null)
+  const [isReportOpen, setIsReportOpen] = useState(false)
 
   const refresh = async () => {
     setIsLoading(true)
@@ -935,13 +965,12 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
 }
 
   */
-  const exportReport = () => {
+  const openReport = () => {
     if (!selectedQuiz) {
-      notify({ tone: 'info', title: 'Select one quiz first', message: 'The PDF report uses the selected quiz and its part columns.' })
+      notify({ tone: 'info', title: 'Select one quiz first', message: 'Choose a quiz to view its score report.' })
       return
     }
-    const assignedStudents = [...new Map(assignmentEntries.map((entry) => [entry.student.schoolId, entry.student])).values()]
-    if (!exportSubmissionReportPdf(selectedQuiz, assignedStudents, scopedSubmissions)) notify({ tone: 'warning', title: 'PDF window blocked', message: 'Allow pop-ups for LateQuiz, then try exporting again.' })
+    setIsReportOpen(true)
   }
 
   return (
@@ -952,7 +981,7 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
           <h2>Student submissions.</h2>
           <p>Review every taken exam, correct grading decisions, and keep the record accurate.</p>
         </div>
-        <div className="submission-header-actions"><span className="submission-total">{submissions.length} attempt{submissions.length === 1 ? '' : 's'}</span><button className="button button-secondary" disabled={!selectedQuiz} onClick={exportReport}><Download size={15} /> Export PDF</button></div>
+        <div className="submission-header-actions"><span className="submission-total">{submissions.length} attempt{submissions.length === 1 ? '' : 's'}</span><button className="button button-secondary" disabled={!selectedQuiz} onClick={openReport}><FileText size={15} /> View score report</button></div>
       </section>
       <section className="submission-toolbar">
         <div className="filter-tabs compact-tabs">
@@ -982,6 +1011,7 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
       </section>
       {selected && <SubmissionReviewDrawer submission={selected} notify={notify} onClose={() => setSelected(null)} onSaved={async () => { await refresh(); setSelected(null) }} onDeleted={async () => { await refresh(); setSelected(null) }} />}
       {dashboardCategory && <SubmissionDashboardModal category={dashboardCategory} entries={dashboardCategory === 'assigned' ? assignmentEntries : dashboardCategory === 'started' ? startedEntries : dashboardCategory === 'answered' ? answeredEntries : dashboardCategory === 'not-answered' ? notAnsweredEntries : reviewEntries} onClose={() => setDashboardCategory(null)} />}
+      {isReportOpen && selectedQuiz && <SubmissionReportModal quiz={selectedQuiz} entries={assignmentEntries} onClose={() => setIsReportOpen(false)} />}
     </div>
   )
 }
@@ -1216,12 +1246,21 @@ function ReporterWorkspacePage({ quizzes, onOpenQuiz }: { quizzes: Quiz[]; onOpe
   return <div className="content-stack reporter-workspace-page"><section className="page-intro-row admin-page-intro"><div><span className="eyebrow">Reporter access</span><h2>Review without answering.</h2><p>These published quizzes were shared with you for read-only review.</p></div><span className="account-secure"><UserCheck size={15} /> View only</span></section>{reporterQuizzes.length ? <div className="student-quiz-grid">{reporterQuizzes.map((quiz) => <StudentQuizCardV2 key={quiz.id} quiz={quiz} onOpen={onOpenQuiz} />)}</div> : <section className="quiz-library-empty"><span className="empty-state-icon"><UserCheck size={22} /></span><strong>No reporter quizzes</strong><span>Your administrator has not shared a quiz for review yet.</span></section>}</div>
 }
 
-function StudentQuizCardV2({ quiz, onOpen }: { quiz: Quiz; onOpen: (quiz: Quiz) => void }) {
+function LegacyStudentQuizCardV2({ quiz, onOpen }: { quiz: Quiz; onOpen: (quiz: Quiz) => void }) {
   const locked = quiz.isAssigned !== true && quiz.isReporter !== true
   const complete = quiz.status === 'completed'
   const awaitingReview = quiz.status === 'in-review'
   const reporter = quiz.isReporter === true
   return <article className={`quiz-card quiz-card-${quizCardTone(quiz.subject)} ${locked ? 'quiz-card-locked' : ''}`}><div className="quiz-card-icon"><BookOpen size={19} /></div><div className="quiz-card-content"><div className="quiz-card-meta"><span>{quiz.subject}</span>{complete ? <StatusBadge tone="success">Completed</StatusBadge> : awaitingReview ? <StatusBadge tone="warning">Awaiting review</StatusBadge> : reporter ? <StatusBadge tone="purple">Reporter access</StatusBadge> : locked ? <StatusBadge tone="neutral" icon={<LockKeyhole size={11} />}>Not assigned</StatusBadge> : <StatusBadge tone="warning">Ready</StatusBadge>}</div><h3>{quiz.title}</h3><p className="quiz-card-description">{quiz.description || 'No instructions added yet.'}</p>{quiz.reporters?.length ? <div className="quiz-card-reporter-row"><AvatarStack people={quiz.reporters} label={`${quiz.reporters.length} quiz reporter${quiz.reporters.length === 1 ? '' : 's'}`} /><span>{quiz.reporters.length} reporter{quiz.reporters.length === 1 ? '' : 's'}</span></div> : null}<div className="quiz-card-details"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span>{quiz.isAssigned && !reporter && quiz.attemptsRemaining !== undefined && <span><CheckCheck size={14} /> {quiz.attemptsRemaining} attempt{quiz.attemptsRemaining === 1 ? '' : 's'} left</span>}</div></div>{complete && <div className="card-score"><strong>{quiz.score !== undefined ? `${quiz.score}%` : quiz.earnedPoints !== undefined && quiz.possiblePoints !== undefined ? `${quiz.earnedPoints} / ${quiz.possiblePoints}` : '--'}</strong><span>{quiz.score !== undefined ? `${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts` : 'score'}</span></div>}<button className={`icon-button card-arrow ${locked ? 'is-locked' : ''}`} onClick={() => onOpen(quiz)} aria-label={locked ? 'Quiz not assigned' : `Open ${quiz.title}`}>{locked ? <LockKeyhole size={17} /> : <ArrowUpRight size={18} />}</button></article>
+}
+
+function StudentQuizCardV2({ quiz, onOpen }: { quiz: Quiz; onOpen: (quiz: Quiz) => void }) {
+  const locked = quiz.isAssigned !== true && quiz.isReporter !== true
+  const complete = quiz.status === 'completed'
+  const awaitingReview = quiz.status === 'in-review'
+  const reporter = quiz.isReporter === true
+  const status = complete ? <StatusBadge tone="success">Completed</StatusBadge> : awaitingReview ? <StatusBadge tone="warning">Awaiting review</StatusBadge> : reporter ? <StatusBadge tone="purple">Reporter access</StatusBadge> : locked ? <StatusBadge tone="neutral" icon={<LockKeyhole size={11} />}>Not assigned</StatusBadge> : <StatusBadge tone="warning">Ready</StatusBadge>
+  return <article className={`quiz-card quiz-card-${quizCardTone(quiz.subject)} ${locked ? 'quiz-card-locked' : ''}`}><div className="quiz-card-icon"><BookOpen size={19} /></div><div className="quiz-card-content"><div className="quiz-card-meta"><span>{quiz.subject}</span>{status}</div><h3>{quiz.title}</h3><p className="quiz-card-description">{quiz.description || 'No instructions added yet.'}</p>{quiz.reporters?.length ? <div className="quiz-card-reporter-row"><AvatarStack people={quiz.reporters} label={`${quiz.reporters.length} quiz reporter${quiz.reporters.length === 1 ? '' : 's'}`} /><span>{quiz.reporters.length} reporter{quiz.reporters.length === 1 ? '' : 's'}</span></div> : null}<div className="quiz-card-details"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span>{quiz.isAssigned && !reporter && quiz.attemptsRemaining !== undefined && <span><CheckCheck size={14} /> {quiz.attemptsRemaining} attempt{quiz.attemptsRemaining === 1 ? '' : 's'} left</span>}</div></div>{complete && <div className="card-score"><strong>{quiz.score !== undefined ? `${quiz.score}%` : quiz.earnedPoints !== undefined && quiz.possiblePoints !== undefined ? `${quiz.earnedPoints} / ${quiz.possiblePoints}` : '--'}</strong><span>{quiz.score !== undefined ? `${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts` : 'score'}</span></div>}<button className={`icon-button card-arrow ${locked ? 'is-locked' : ''}`} onClick={() => onOpen(quiz)} aria-label={locked ? 'Quiz not assigned' : `Open ${quiz.title}`}>{locked ? <LockKeyhole size={17} /> : <ArrowUpRight size={18} />}</button></article>
 }
 
 function StudentQuiz({ student, schoolId, quiz, onExit: exitQuiz, onRefreshWorkspace, notify }: { student: Student; schoolId: string; quiz: Quiz; onExit: () => void; onRefreshWorkspace: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
@@ -1407,7 +1446,7 @@ function AdminQuizzes({ quizzes, onStartBuilder, onRefresh, notify }: { quizzes:
   return <div className="content-stack"><section className="page-intro-row admin-page-intro"><div><span className="eyebrow">Assessment library</span><h2>All quizzes, one clear workspace.</h2><p>Create, review, publish, and assign recovery assessments from one place.</p></div><button className="button button-primary" onClick={() => onStartBuilder(true)}><Plus size={17} /> New quiz</button></section><div className="quiz-library-toolbar"><div className="filter-tabs">{filters.map((item) => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}<span>{item === 'All quizzes' ? quizzes.length : item === 'Published' ? quizzes.filter((quiz) => quiz.status === 'ready').length : item === 'Drafts' ? quizzes.filter((quiz) => quiz.status === 'draft').length : quizzes.filter((quiz) => quiz.status === 'archived').length}</span></button>)}</div><div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search quizzes" /></div></div>{filtered.length ? <div className="admin-quiz-grid">{filtered.map((quiz) => <AdminQuizCard key={quiz.id} quiz={quiz} onEdit={() => onStartBuilder(false, quiz)} onAssign={() => setAssigningQuiz(quiz)} onRefresh={onRefresh} notify={notify} />)}<button className="new-quiz-card" onClick={() => onStartBuilder(true)}><span><Plus size={21} /></span><strong>Create another quiz</strong><small>Start with a clean question set</small></button></div> : <section className="quiz-library-empty"><span className="empty-state-icon"><FolderKanban size={22} /></span><strong>{quizzes.length ? 'No quizzes match this filter' : 'No quizzes yet'}</strong><span>{quizzes.length ? 'Try another filter or search term.' : 'Create your first quiz to start building the library.'}</span><button className="button button-primary" onClick={() => onStartBuilder(true)}><Plus size={15} /> Create quiz</button></section>}{assigningQuiz && <AssignQuizModal quiz={assigningQuiz} onClose={() => setAssigningQuiz(null)} onSaved={async () => { setAssigningQuiz(null); await onRefresh() }} notify={notify} />}</div>
 }
 
-function AdminQuizCard({ quiz, onEdit, onAssign, onRefresh, notify }: { quiz: Quiz; onEdit: () => void; onAssign: () => void; onRefresh: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
+function LegacyAdminQuizCardV2({ quiz, onEdit, onAssign, onRefresh, notify }: { quiz: Quiz; onEdit: () => void; onAssign: () => void; onRefresh: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -1429,6 +1468,40 @@ function AdminQuizCard({ quiz, onEdit, onAssign, onRefresh, notify }: { quiz: Qu
     await onRefresh()
   }
   return <article className={`admin-quiz-card admin-quiz-card-${quizCardTone(quiz.subject)}`}><div className="admin-quiz-card-top"><div className={`admin-quiz-art art-${quizCardTone(quiz.subject)}`}><BookOpen size={22} /></div><div className="menu-anchor"><button className="icon-button" aria-label="More quiz actions" onClick={() => setMenuOpen((value) => !value)}><MoreHorizontal size={18} /></button>{menuOpen && <div className="menu-popover quiz-popover"><button onClick={onEdit}><Pencil size={14} /> Edit quiz</button><button onClick={onAssign}><UsersRound size={14} /> Assign students</button>{quiz.status === 'ready' ? <button onClick={() => void changeStatus('draft')}><FileText size={14} /> Move to drafts</button> : quiz.status === 'draft' ? <button onClick={() => void changeStatus('published')}><Send size={14} /> Publish quiz</button> : <button onClick={() => void changeStatus('draft')}><FolderKanban size={14} /> Restore draft</button>}<button className="danger-menu-item" onClick={() => { setMenuOpen(false); setConfirmDelete(true) }}><Trash2 size={14} /> Delete quiz</button></div>}</div></div><div className="admin-quiz-card-copy"><div className="quiz-card-meta"><span>{quiz.subject}</span><StatusBadge tone={statusTone}>{statusLabel}</StatusBadge></div><h3>{quiz.title}</h3><p>{quiz.description || 'No instructions added yet.'}</p></div>{quiz.reporters?.length ? <div className="admin-quiz-reporters"><AvatarStack people={quiz.reporters} label={`${quiz.reporters.length} quiz reporter${quiz.reporters.length === 1 ? '' : 's'}`} /><span>{quiz.reporters.length} reporter{quiz.reporters.length === 1 ? '' : 's'}</span></div> : null}<div className="admin-quiz-card-stats"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><UsersRound size={14} /> {quiz.assignedCount ?? 0} assigned</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span></div><div className="admin-quiz-card-actions"><button className="button button-secondary" onClick={onEdit}><Pencil size={14} /> Edit quiz</button><button className="button button-primary" onClick={onAssign}><UsersRound size={14} /> Assign</button></div>{confirmDelete && <ConfirmModal title={`Delete ${quiz.title}?`} message="Drafts without attempts are permanently deleted. Quizzes with history are archived so student scores remain safe." confirmLabel={isDeleting ? 'Deleting...' : 'Delete quiz'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</article>
+}
+
+function AdminQuizCard({ quiz, onEdit, onAssign, onRefresh, notify }: { quiz: Quiz; onEdit: () => void; onAssign: () => void; onRefresh: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [statusAction, setStatusAction] = useState<'draft' | 'published' | 'archived' | null>(null)
+  const statusTone = quiz.status === 'ready' ? 'success' : quiz.status === 'draft' ? 'warning' : 'neutral'
+  const statusLabel = quiz.status === 'ready' ? 'Published' : quiz.status === 'draft' ? 'Draft' : 'Archived'
+  const changeStatus = async (status: 'draft' | 'published' | 'archived') => {
+    if (statusAction) return
+    setStatusAction(status)
+    try {
+      const result = await setQuizStatus(quiz.id, status)
+      if (result.error) notify({ tone: 'warning', title: 'Quiz status could not change', message: result.error.message })
+      else { notify({ tone: 'success', title: status === 'published' ? 'Quiz published' : status === 'archived' ? 'Quiz archived' : 'Quiz moved to drafts' }); await onRefresh() }
+    } catch (error) {
+      notify({ tone: 'warning', title: 'Quiz status could not change', message: (error as Error).message })
+    } finally {
+      setStatusAction(null)
+      setMenuOpen(false)
+    }
+  }
+  const remove = async () => {
+    setIsDeleting(true)
+    const result = await deleteQuiz(quiz.id)
+    setIsDeleting(false)
+    if (result.error) return notify({ tone: 'warning', title: 'Quiz could not be deleted', message: result.error.message })
+    setConfirmDelete(false)
+    notify({ tone: 'success', title: result.result === 'archived' ? 'Quiz archived safely' : 'Quiz deleted', message: result.result === 'archived' ? 'Its historical attempts were preserved.' : undefined })
+    await onRefresh()
+  }
+  const statusButton = (status: 'draft' | 'published' | 'archived', icon: ReactNode, label: string, busyLabel: string) => <button disabled={Boolean(statusAction) || isDeleting} onClick={() => void changeStatus(status)}>{statusAction === status ? <LoaderCircle className="spin" size={14} /> : icon} {statusAction === status ? busyLabel : label}</button>
+  return <article className={`admin-quiz-card admin-quiz-card-${quizCardTone(quiz.subject)} ${statusAction ? 'is-status-changing' : ''}`} aria-busy={Boolean(statusAction)}><div className="admin-quiz-card-top"><div className={`admin-quiz-art art-${quizCardTone(quiz.subject)}`}><BookOpen size={22} /></div><div className="menu-anchor"><button className="icon-button" disabled={Boolean(statusAction) || isDeleting} aria-label="More quiz actions" onClick={() => setMenuOpen((value) => !value)}><MoreHorizontal size={18} /></button>{menuOpen && <div className="menu-popover quiz-popover"><button disabled={Boolean(statusAction) || isDeleting} onClick={onEdit}><Pencil size={14} /> Edit quiz</button><button disabled={Boolean(statusAction) || isDeleting} onClick={onAssign}><UsersRound size={14} /> Assign students</button>{quiz.status === 'ready' ? statusButton('draft', <FileText size={14} />, 'Move to drafts', 'Moving...') : quiz.status === 'draft' ? statusButton('published', <Send size={14} />, 'Publish quiz', 'Publishing...') : statusButton('draft', <FolderKanban size={14} />, 'Restore draft', 'Restoring...')}<button className="danger-menu-item" disabled={Boolean(statusAction) || isDeleting} onClick={() => { setMenuOpen(false); setConfirmDelete(true) }}><Trash2 size={14} /> Delete quiz</button></div>}</div></div><div className="admin-quiz-card-copy"><div className="quiz-card-meta"><span>{quiz.subject}</span><StatusBadge tone={statusTone}>{statusLabel}</StatusBadge></div><h3>{quiz.title}</h3><p>{quiz.description || 'No instructions added yet.'}</p></div>{quiz.reporters?.length ? <div className="admin-quiz-reporters"><AvatarStack people={quiz.reporters} label={`${quiz.reporters.length} quiz reporter${quiz.reporters.length === 1 ? '' : 's'}`} /><span>{quiz.reporters.length} reporter{quiz.reporters.length === 1 ? '' : 's'}</span></div> : null}<div className="admin-quiz-card-stats"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><UsersRound size={14} /> {quiz.assignedCount ?? 0} assigned</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span></div><div className="admin-quiz-card-actions"><button className="button button-secondary" disabled={Boolean(statusAction) || isDeleting} onClick={onEdit}><Pencil size={14} /> Edit quiz</button><button className="button button-primary" disabled={Boolean(statusAction) || isDeleting} onClick={onAssign}><UsersRound size={14} /> Assign</button></div>{confirmDelete && <ConfirmModal title="Delete this quiz?" message="Published quizzes with historical attempts are archived safely. Draft quizzes without attempts are removed." confirmLabel={isDeleting ? 'Deleting...' : 'Delete quiz'} onCancel={() => { if (!isDeleting) setConfirmDelete(false) }} onConfirm={() => void remove()} />}</article>
 }
 
 function AssignQuizModal({ quiz, onClose, onSaved, notify }: { quiz: Quiz; onClose: () => void; onSaved: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
