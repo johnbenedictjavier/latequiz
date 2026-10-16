@@ -1,0 +1,39 @@
+{
+  "name": "LateQuiz Recovery Workspace",
+  "short_name": "LateQuiz",
+  "description": "LateQuiz recovery assessment workspace",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#f4f7fb",
+  "background_color": "#f4f7fb",
+  "icons": [
+    {
+      "src": "/latequiz.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/latequiz.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Student login",
+      "short_name": "Student login",
+      "url": "/login",
+      "icons": [{ "src": "/latequiz.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Admin login",
+      "short_name": "Admin login",
+      "url": "/login?role=admin",
+      "icons": [{ "src": "/latequiz.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

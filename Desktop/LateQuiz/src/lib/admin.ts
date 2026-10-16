@@ -35,6 +35,7 @@ type SaveQuizInput = {
   status: 'draft' | 'published'
   parts?: QuizPart[]
   questions?: Question[]
+  collaboratorSchoolIds?: string[]
 }
 
 function isUuid(value: string) {
@@ -148,20 +149,31 @@ export async function saveQuiz(input: SaveQuizInput) {
         prompt: question.prompt.trim(),
         points: question.points,
         options: question.type === 'multiple-choice' ? (question.options ?? []).map((option) => option.trim()) : [],
-        answer_key: question.answer?.trim() || null,
         requires_manual_review: question.requiresReview ?? (question.type === 'essay' || question.type === 'upload'),
       }
       const shouldUpdate = isUuid(question.id) && existingQuestionIds.has(question.id)
       const result = shouldUpdate
-        ? await supabase.from('LQ_questions').update(questionRow).eq('id', question.id).eq('quiz_id', quizId)
-        : await supabase.from('LQ_questions').insert(questionRow)
+        ? await supabase.from('LQ_questions').update(questionRow).eq('id', question.id).eq('quiz_id', quizId).select('id').single()
+        : await supabase.from('LQ_questions').insert(questionRow).select('id').single()
       if (result.error) return { id: null, error: result.error }
+      const persistedQuestionId = (result.data?.id as string | undefined) ?? question.id
+      const { error: keyError } = await supabase.from('LQ_question_keys').upsert({
+        question_id: persistedQuestionId,
+        answer_key: question.answer?.trim() || null,
+      }, { onConflict: 'question_id' })
+      if (keyError) return { id: null, error: keyError }
     }
     if (!part.questions.length) {
       const { error } = await supabase.from('LQ_quiz_parts').update({ position: partIndex + 1 }).eq('id', persistedPartId)
       if (error) return { id: null, error }
     }
   }
+
+  const { error: collaboratorError } = await supabase.rpc('LQ_sync_quiz_collaborators', {
+    p_quiz_id: quizId,
+    p_school_ids: input.collaboratorSchoolIds ?? [],
+  })
+  if (collaboratorError) return { id: null, error: collaboratorError }
 
   return { id: quizId, error: null }
 }
@@ -184,6 +196,16 @@ export async function loadQuizAssignments(quizId: string) {
     .eq('quiz_id', quizId)
     .eq('is_active', true)
   return { data: data ?? [], error }
+}
+
+export async function loadQuizCollaborators(quizId: string) {
+  if (!supabase) return { data: [] as string[], error: new Error('Supabase is not configured.') }
+  const { data, error } = await supabase
+    .from('LQ_quiz_collaborators')
+    .select('school_id')
+    .eq('quiz_id', quizId)
+    .eq('role', 'reporter')
+  return { data: (data ?? []).map((row) => row.school_id as string), error }
 }
 
 export async function deleteQuiz(quizId: string) {

@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { sortStudents } from './sorting'
-import type { Notification, PartScore, Question, Quiz, QuizPart, ScoreRecord, Student, Subject } from '../types'
+import { signedAvatarUrl } from './profile'
+import type { Notification, PartScore, Question, Quiz, QuizPart, QuizReporter, ScoreRecord, Student, Subject } from '../types'
 
 type QuizRow = {
   id: string
@@ -53,6 +54,14 @@ type NotificationRow = {
   metadata: Record<string, string> | null
 }
 
+type ReporterRow = {
+  quiz_id: string
+  school_id: string
+  first_names: string
+  last_name: string
+  avatar_url: string | null
+}
+
 function mapQuestion(row: QuestionRow): Question {
   return {
     id: row.id,
@@ -67,10 +76,10 @@ function mapQuestion(row: QuestionRow): Question {
   }
 }
 
-function mapAdminQuestion(row: QuestionRow): Question {
+function mapAdminQuestion(row: QuestionRow, answerKey?: string | null): Question {
   return {
     ...mapQuestion(row),
-    answer: row.answer_key ?? undefined,
+    answer: answerKey ?? undefined,
   }
 }
 
@@ -134,15 +143,17 @@ export async function loadStudentWorkspace(schoolId: string) {
   const quizzes = (quizRows ?? []) as QuizRow[]
   const quizIds = quizzes.map((quiz) => quiz.id)
   const assignedIds = new Set((assignments ?? []).map((assignment) => assignment.quiz_id))
-  const [{ data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: attemptRows, error: attemptError }] = await Promise.all([
+  const [{ data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: attemptRows, error: attemptError }, { data: reporterRows, error: reporterError }] = await Promise.all([
     quizIds.length ? supabase.from('LQ_questions').select('id, quiz_id, position, part_id, part_position, question_type, prompt, points, options, requires_manual_review').in('quiz_id', quizIds).order('position') : Promise.resolve({ data: [], error: null }),
     quizIds.length ? supabase.from('LQ_quiz_parts').select('id, quiz_id, position, title').in('quiz_id', quizIds).order('position') : Promise.resolve({ data: [], error: null }),
-    supabase.from('LQ_attempts').select('id, quiz_id, attempt_number, status, auto_score, manual_score, final_score, started_at, expires_at').eq('school_id', schoolId).order('started_at', { ascending: false }),
+    supabase.from('LQ_attempts').select('id, quiz_id, attempt_number, status, auto_score, manual_score, final_score, started_at, submitted_at, expires_at, time_taken_seconds').eq('school_id', schoolId).order('started_at', { ascending: false }),
+    quizIds.length ? supabase.rpc('LQ_get_quiz_reporters', { p_quiz_ids: quizIds }) : Promise.resolve({ data: [], error: null }),
   ])
 
   if (questionError) throw questionError
   if (partError) throw partError
   if (attemptError) throw attemptError
+  if (reporterError) throw reporterError
 
   const attempts = (attemptRows ?? []).filter((attempt) => attempt.status !== 'cancelled')
   const attemptIds = attempts.map((attempt) => attempt.id)
@@ -175,8 +186,32 @@ export async function loadStudentWorkspace(schoolId: string) {
   }
 
   const attemptsByQuiz = new Map<string, typeof attempts[number]>()
+  const attemptCountByQuiz = new Map<string, number>()
   for (const attempt of attempts) {
     if (!attemptsByQuiz.has(attempt.quiz_id)) attemptsByQuiz.set(attempt.quiz_id, attempt)
+    if (attempt.status !== 'cancelled') {
+      attemptCountByQuiz.set(attempt.quiz_id, (attemptCountByQuiz.get(attempt.quiz_id) ?? 0) + 1)
+    }
+  }
+
+  const reportersByQuiz = new Map<string, QuizReporter[]>()
+  const reporterRowsWithAvatars = await Promise.all(((reporterRows ?? []) as ReporterRow[]).map(async (reporter) => {
+    const avatar = await signedAvatarUrl(reporter.avatar_url)
+    return {
+      quizId: reporter.quiz_id as string,
+      reporter: {
+        schoolId: reporter.school_id as string,
+        firstNames: reporter.first_names as string,
+        lastName: reporter.last_name as string,
+        avatarPath: (reporter.avatar_url as string | null) ?? undefined,
+        avatar: avatar.url ?? undefined,
+      } satisfies QuizReporter,
+    }
+  }))
+  for (const item of reporterRowsWithAvatars) {
+    const current = reportersByQuiz.get(item.quizId) ?? []
+    current.push(item.reporter)
+    reportersByQuiz.set(item.quizId, current)
   }
 
   const answersByAttempt = new Map<string, number>()
@@ -196,6 +231,8 @@ export async function loadStudentWorkspace(schoolId: string) {
     const parts = partsByQuiz.get(row.id) ?? []
     const attempt = attemptsByQuiz.get(row.id)
     const isAssigned = assignedIds.has(row.id)
+    const reporters = reportersByQuiz.get(row.id) ?? []
+    const isReporter = reporters.some((reporter) => reporter.schoolId === schoolId)
     const isSubmitted = attempt?.status === 'submitted' || attempt?.status === 'reviewed' || attempt?.status === 'expired'
     const hasFinalScore = attempt?.final_score !== null && attempt?.final_score !== undefined
     const score = attempt ? Number(attempt.final_score ?? attempt.auto_score ?? 0) : undefined
@@ -211,7 +248,7 @@ export async function loadStudentWorkspace(schoolId: string) {
       points: questions.reduce((sum, question) => sum + question.points, 0),
       durationMinutes: Math.round(row.duration_seconds / 60),
       dueLabel: isAssigned ? 'Assigned to your school ID' : 'Not assigned to you',
-      status: !isAssigned ? 'locked' : !attempt ? 'ready' : isSubmitted ? (hasFinalScore ? 'completed' : 'in-review') : 'ready',
+      status: isReporter ? 'reported' : !isAssigned ? 'locked' : !attempt ? 'ready' : isSubmitted ? (hasFinalScore ? 'completed' : 'in-review') : 'ready',
       progress: attempt ? Math.round(((answersByAttempt.get(attempt.id) ?? 0) / Math.max(questions.length, 1)) * 100) : 0,
       score,
       passingScore: Number(row.passing_score),
@@ -224,7 +261,14 @@ export async function loadStudentWorkspace(schoolId: string) {
       parts,
       answeredCount: attempt ? answersByAttempt.get(attempt.id) ?? 0 : 0,
       attemptLimit: Number((assignments ?? []).find((assignment) => assignment.quiz_id === row.id)?.attempt_limit ?? 1),
+      attemptsRemaining: isAssigned ? Math.max(Number((assignments ?? []).find((assignment) => assignment.quiz_id === row.id)?.attempt_limit ?? 1) - (attemptCountByQuiz.get(row.id) ?? 0), 0) : undefined,
       expiresAt: attempt?.status === 'in_progress' ? attempt.expires_at : undefined,
+      startedAt: attempt?.started_at,
+      submittedAt: attempt?.submitted_at,
+      timeTakenSeconds: attempt?.time_taken_seconds === null || attempt?.time_taken_seconds === undefined ? undefined : Number(attempt.time_taken_seconds),
+      isReporter,
+      canAnswer: isAssigned && !isReporter,
+      reporters,
     }
   })
 
@@ -248,6 +292,7 @@ export async function loadStudentWorkspace(schoolId: string) {
         parts,
         status: attempt.final_score === null || attempt.final_score === undefined ? 'reviewing' : score >= Number(quiz?.passing_score ?? 75) ? 'passed' : 'needs-retake',
         reviewed: attempt.status === 'reviewed',
+        timeTakenSeconds: attempt.time_taken_seconds === null || attempt.time_taken_seconds === undefined ? undefined : Number(attempt.time_taken_seconds),
       }
     })
 
@@ -257,22 +302,26 @@ export async function loadStudentWorkspace(schoolId: string) {
 export async function loadAdminQuizzes() {
   if (!supabase) return []
 
-  const [{ data: quizRows, error: quizError }, { data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: assignmentRows, error: assignmentError }] = await Promise.all([
+  const [{ data: quizRows, error: quizError }, { data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: assignmentRows, error: assignmentError }, { data: keyRows, error: keyError }] = await Promise.all([
     supabase.from('LQ_quizzes').select('id, title, subject, description, duration_seconds, passing_score, status').order('created_at', { ascending: false }),
-    supabase.from('LQ_questions').select('id, quiz_id, position, part_id, part_position, question_type, prompt, points, options, answer_key, requires_manual_review').order('position'),
+    supabase.from('LQ_questions').select('id, quiz_id, position, part_id, part_position, question_type, prompt, points, options, requires_manual_review').order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, position, title').order('position'),
     supabase.from('LQ_quiz_assignments').select('quiz_id, is_active'),
+    supabase.from('LQ_question_keys').select('question_id, answer_key'),
   ])
 
   if (quizError) throw quizError
   if (questionError) throw questionError
   if (partError) throw partError
   if (assignmentError) throw assignmentError
+  if (keyError) throw keyError
+
+  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_key: string | null }>).map((row) => [row.question_id, row.answer_key]))
 
   const questionsByQuiz = new Map<string, Question[]>()
   for (const row of (questionRows ?? []) as QuestionRow[]) {
     const current = questionsByQuiz.get(row.quiz_id) ?? []
-    current.push(mapAdminQuestion(row))
+    current.push(mapAdminQuestion(row, answerKeys.get(row.id)))
     questionsByQuiz.set(row.quiz_id, current)
   }
 
@@ -337,6 +386,20 @@ export async function loadAdminRoster() {
     mustChangePassword: student.must_change_password,
     assignmentCount: assignmentCounts.get(student.school_id) ?? 0,
   })) as Student[])
+}
+
+export async function loadAdminAssignments() {
+  if (!supabase) return [] as Array<{ quizId: string; schoolId: string; attemptLimit: number }>
+  const { data, error } = await supabase
+    .from('LQ_quiz_assignments')
+    .select('quiz_id, school_id, attempt_limit')
+    .eq('is_active', true)
+  if (error) throw error
+  return (data ?? []).map((assignment) => ({
+    quizId: assignment.quiz_id as string,
+    schoolId: assignment.school_id as string,
+    attemptLimit: Number(assignment.attempt_limit ?? 1),
+  }))
 }
 
 export async function loadSubjects() {

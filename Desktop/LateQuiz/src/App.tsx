@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -18,6 +18,7 @@ import {
   Code2,
   Eye,
   EyeOff,
+  Download,
   FileText,
   FileUp,
   FolderKanban,
@@ -27,6 +28,7 @@ import {
   Home,
   LayoutDashboard,
   Layers3,
+  LoaderCircle,
   ListChecks,
   LockKeyhole,
   LogOut,
@@ -37,15 +39,16 @@ import {
   Search,
   Send,
   ShieldCheck,
-  Sparkles,
+  CheckCircle2 as Sparkles,
   Target,
   Trash2,
   Upload,
+  UserCheck,
   UserRound,
   UsersRound,
   X,
 } from 'lucide-react'
-import { assignQuiz, DEFAULT_STUDENT_PASSWORD, deleteQuiz, loadQuizAssignments, provisionStudentAccounts, resetStudentPassword, saveQuiz, saveStudent, setQuizStatus } from './lib/admin'
+import { assignQuiz, DEFAULT_STUDENT_PASSWORD, deleteQuiz, loadQuizAssignments, loadQuizCollaborators, provisionStudentAccounts, resetStudentPassword, saveQuiz, saveStudent, setQuizStatus } from './lib/admin'
 import { saveAttemptAnswers, startAttempt, submitAttempt, type AttemptSubmissionResult } from './lib/attempts'
 import { changePassword, requestPasswordReset, signInWithAdminUsername, signInWithSchoolId, signOut } from './lib/auth'
 import { importQuizPdf } from './lib/pdfImport'
@@ -53,8 +56,9 @@ import { removeAvatar, signedAvatarUrl, uploadAvatar } from './lib/profile'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { deleteSubmission, loadAdminSubmissions, reviewSubmission } from './lib/submissions'
 import { sortStudents } from './lib/sorting'
-import { createSubject, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
-import type { AdminView, Notification, Question, Quiz, QuizPart, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionPartColumn, ToastMessage } from './types'
+import { createSubject, loadAdminAssignments, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
+import { exportSubmissionReportPdf } from './lib/submissionReport'
+import type { AdminView, Notification, Question, Quiz, QuizPart, QuizReporter, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionAssignment, SubmissionDashboardCategory, SubmissionPartColumn, ToastMessage } from './types'
 import latequizLogo from '../latequiz.png'
 
 type AuthRoute = 'student' | 'admin'
@@ -138,7 +142,7 @@ export default function App() {
   const applyLogin = (nextRole: Role, nextStudent?: Student, forcePasswordChange = false) => {
     setRole(nextRole)
     setStudent(nextStudent ?? null)
-    setMustChangePassword(forcePasswordChange && nextRole === 'student')
+    setMustChangePassword(forcePasswordChange)
   }
 
   const clearSessionState = () => {
@@ -186,7 +190,7 @@ export default function App() {
         return
       }
       if (profile.role === 'admin') {
-        applyLogin('admin')
+        applyLogin('admin', undefined, Boolean(profile.must_change_password))
         setAuthReady(true)
         return
       }
@@ -325,8 +329,8 @@ export default function App() {
     return <><AuthScreen route={authRoute} onNavigate={navigateAuth} onLogin={applyLogin} notify={notify} />{toast && <Toast toast={toast} onClose={() => notify(null)} />}</>
   }
 
-  if (role === 'student' && student && mustChangePassword) {
-    return <><PasswordChangePage student={student} onComplete={() => setMustChangePassword(false)} onLogout={handleLogout} notify={notify} />{toast && <Toast toast={toast} onClose={() => notify(null)} />}{showLogoutConfirm && <ConfirmModal title="Sign out of LateQuiz?" message="Your current session will be closed on this device." confirmLabel={isLoggingOut ? 'Signing out...' : 'Sign out'} onCancel={() => setShowLogoutConfirm(false)} onConfirm={() => void confirmLogout()} />}</>
+  if (mustChangePassword) {
+     return <><PasswordChangePage role={role} student={student} onComplete={() => setMustChangePassword(false)} onLogout={handleLogout} notify={notify} />{toast && <Toast toast={toast} onClose={() => notify(null)} />}{showLogoutConfirm && <ConfirmModal title="Sign out of LateQuiz?" message="Your current session will be closed on this device." confirmLabel={isLoggingOut ? 'Signing out...' : 'Sign out'} onCancel={() => setShowLogoutConfirm(false)} onConfirm={() => void confirmLogout()} />}</>
   }
 
   return <>
@@ -416,8 +420,8 @@ function LegacyAuthScreen({ route, onNavigate, onLogin, notify }: { route: AuthR
     <section className="auth-panel"><div className="auth-panel-inner">
       <div className="mobile-brand brand"><span className="brand-mark"><GraduationCap size={21} /></span><span>LateQuiz</span></div>
       <div className="auth-heading"><span className="eyebrow">{isAdmin ? 'Administrator access' : 'Student portal'}</span><h2>{isForgot ? 'Request a password reset' : isAdmin ? 'Admin workspace' : 'Sign in to continue'}</h2><p>{isForgot ? 'Enter your school ID and your administrator will receive a reset request.' : isAdmin ? 'Review submissions, manage assignments, and keep students moving.' : 'Your school ID is your key to every assigned quiz.'}</p></div>
-      {isForgot ? <form className="reset-card" onSubmit={submitResetRequest}><div className="reset-icon"><ShieldCheck size={22} /></div><h3>Ask your administrator</h3><p>Your account will be reset to the default password after your administrator approves the request.</p><label className="field-label" htmlFor="reset-school-id">School ID</label><div className="input-wrap"><UserRound size={18} /><input id="reset-school-id" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="e.g. 24-00392" /></div><button className="button button-primary button-full" disabled={isLoading} type="submit">{isLoading ? 'Sending...' : 'Send reset request'} <Send size={15} /></button><button className="button button-secondary button-full" type="button" onClick={() => setIsForgot(false)}>Back to login</button></form> : <form className="auth-form" onSubmit={submit}>
-        <label className="field-label" htmlFor="identity">{isAdmin ? 'Admin username' : 'School ID'}</label><div className="input-wrap"><UserRound size={18} /><input id="identity" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder={isAdmin ? 'Enter admin username' : 'e.g. 24-00392'} autoComplete="username" /></div>
+      {isForgot ? <form className="reset-card" onSubmit={submitResetRequest}><div className="reset-icon"><ShieldCheck size={22} /></div><h3>Ask your administrator</h3><p>Your account will be reset to the default password after your administrator approves the request.</p><label className="field-label" htmlFor="reset-school-id">School ID</label><div className="input-wrap"><UserRound size={18} /><input id="reset-school-id" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="e.g. 24-00000" /></div><button className="button button-primary button-full" disabled={isLoading} type="submit">{isLoading ? 'Sending...' : 'Send reset request'} <Send size={15} /></button><button className="button button-secondary button-full" type="button" onClick={() => setIsForgot(false)}>Back to login</button></form> : <form className="auth-form" onSubmit={submit}>
+        <label className="field-label" htmlFor="identity">{isAdmin ? 'Admin username' : 'School ID'}</label><div className="input-wrap"><UserRound size={18} /><input id="identity" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder={isAdmin ? 'Enter admin username' : 'e.g. 24-00000'} autoComplete="username" /></div>
         <div className="field-label-row"><label className="field-label" htmlFor="password">Password</label>{!isAdmin && <button type="button" className="text-button" onClick={() => setIsForgot(true)}>Forgot password?</button>}</div><div className="input-wrap"><LockIcon /><input id="password" value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? 'text' : 'password'} placeholder="Enter your password" autoComplete="current-password" /><button type="button" className="input-action" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
         {!isAdmin && <p className="auth-hint">New or reset student accounts start with the default password provided by your administrator.</p>}
         <button className="button button-primary button-full button-large" disabled={isLoading} type="submit">{isLoading ? 'Checking...' : isAdmin ? 'Enter admin workspace' : 'Continue'} <ArrowRight size={17} /></button>
@@ -487,7 +491,7 @@ function LegacyAdminApp({ view, quizzes, builderQuiz, isBuilderNew, onNavigate, 
   const title = view === 'overview' ? `${currentGreeting(now)}, admin` : view === 'quizzes' ? 'Manage quizzes' : view === 'builder' ? (isBuilderNew ? 'Create a new quiz' : 'Edit quiz') : view === 'submissions' ? 'Student submissions' : 'Manage students'
   const eyebrow = view === 'overview' ? 'Admin workspace' : view === 'quizzes' ? 'Assessment library' : view === 'builder' ? 'Quiz studio' : view === 'submissions' ? 'Review queue' : 'Roster and access'
   const unread = notifications.filter((item) => !item.readAt).length
-  return <div className="app-shell admin-shell"><Sidebar role="admin" active={view} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as AdminView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><NotificationCenter notifications={notifications} unread={unread} onOpen={handleNotification} /><div className="admin-avatar">A</div></div></header><main className="page-content">{view === 'overview' && <AdminOverviewPage quizzes={quizzes} onNavigate={onNavigate} />}{view === 'quizzes' && <AdminQuizzes quizzes={quizzes} onStartBuilder={onStartBuilder} onRefresh={onRefreshQuizzes} notify={notify} />}{view === 'builder' && <AdminBuilderWorkspace key={builderQuiz?.id ?? 'new'} isNew={isBuilderNew} quiz={builderQuiz} onNavigate={onNavigate} onSaved={async () => { await onRefreshQuizzes(); onNavigate('quizzes') }} notify={notify} />}{view === 'submissions' && <AdminSubmissions />}{view === 'students' && <AdminStudentsPage focusStudentId={focusStudentId} notify={notify} />}</main></div></div>
+  return <div className="app-shell admin-shell"><Sidebar role="admin" active={view} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as AdminView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><NotificationCenter notifications={notifications} unread={unread} onOpen={handleNotification} /><div className="admin-avatar">A</div></div></header><main className="page-content">{view === 'overview' && <AdminOverviewPage quizzes={quizzes} onNavigate={onNavigate} />}{view === 'quizzes' && <AdminQuizzes quizzes={quizzes} onStartBuilder={onStartBuilder} onRefresh={onRefreshQuizzes} notify={notify} />}{view === 'builder' && <AdminBuilderWorkspace key={builderQuiz?.id ?? 'new'} isNew={isBuilderNew} quiz={builderQuiz} onNavigate={onNavigate} onSaved={async () => { await onRefreshQuizzes(); onNavigate('quizzes') }} notify={notify} />}{view === 'submissions' && <AdminSubmissions quizzes={quizzes} notify={notify} />}{view === 'students' && <AdminStudentsPage focusStudentId={focusStudentId} notify={notify} />}</main></div></div>
 }
 
 function LegacySidebar({ role, active, onNavigate, onLogout, student, mobileOpen, onClose }: { role: Role; active: string; onNavigate: (view: string) => void; onLogout: () => void; student?: Student; mobileOpen: boolean; onClose: () => void }) {
@@ -524,6 +528,7 @@ function LegacyStudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace
   const [secondsLeft, setSecondsLeft] = useState(() => quiz.expiresAt ? Math.max(0, Math.ceil((new Date(quiz.expiresAt).getTime() - Date.now()) / 1000)) : quiz.durationMinutes * 60)
   const [answers, setAnswers] = useState<Record<string, string>>(() => Object.fromEntries(questions.map((question) => [question.id, question.response ?? ''])))
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [submissionResult, setSubmissionResult] = useState<AttemptSubmissionResult | null>(null)
   const currentQuestion = questions[currentIndex]
   const answeredCount = Object.values(answers).filter(Boolean).length
@@ -561,7 +566,17 @@ function LegacyStudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace
     return () => window.clearInterval(timer)
   }, [expiresAt, isSubmitted])
 
-  const finishQuiz = async () => {
+  useEffect(() => {
+    if (!attemptId || isSubmitted) return
+    const warnBeforeExit = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = 'Your current answers will be submitted only if you choose Exit quiz inside LateQuiz.'
+    }
+    window.addEventListener('beforeunload', warnBeforeExit)
+    return () => window.removeEventListener('beforeunload', warnBeforeExit)
+  }, [attemptId, isSubmitted])
+
+  const finishQuiz = async (submissionReason: 'manual' | 'exit' | 'timeout' = 'manual') => {
     if (isSubmitting) return
     if (!attemptId) return notify({ tone: 'warning', title: 'Attempt is not ready', message: 'Wait for the quiz attempt to connect before submitting.' })
     setIsSubmitting(true)
@@ -571,7 +586,7 @@ function LegacyStudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace
       setIsSubmitting(false)
       return
     }
-    const submitResult = await submitAttempt(attemptId)
+    const submitResult = await submitAttempt(attemptId, submissionReason)
     if (submitResult.error) {
       notify({ tone: 'warning', title: 'Could not submit quiz', message: submitResult.error.message })
       setIsSubmitting(false)
@@ -585,10 +600,17 @@ function LegacyStudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace
 
   useEffect(() => {
     if (secondsLeft === 0 && !isSubmitted && attemptId) {
-      void finishQuiz()
+      void finishQuiz('timeout')
       notify({ tone: 'warning', title: 'Time is up', message: 'Your saved answers were submitted automatically.' })
     }
   }, [secondsLeft, isSubmitted, attemptId])
+
+  const requestExit = () => {
+    if (isSubmitting || isSubmitted) return
+    setShowExitConfirm(true)
+  }
+
+  if (quiz.status === 'reported') return <ReporterQuizView quiz={quiz} onExit={onExit} />
 
   if (quiz.status === 'completed' || quiz.status === 'in-review') return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to dashboard</button><div className="result-card"><div className="result-burst"><CheckCircle2 size={30} /></div><span className="eyebrow eyebrow-accent">{quiz.status === 'completed' ? 'Completed quiz' : 'Awaiting review'}</span><h2>{quiz.status === 'completed' ? `You scored ${quiz.score ?? 0}%.` : 'Your answers are under review.'}</h2><p>This quiz is read-only because the attempt has already been submitted.</p><button className="button button-primary" onClick={onExit}>Return to dashboard <ArrowRight size={16} /></button></div></section>
   if (!currentQuestion) return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to dashboard</button><div className="result-card"><div className="result-burst"><BookOpen size={28} /></div><h2>This quiz has no questions yet.</h2><p>Ask your administrator to finish the quiz before starting it.</p></div></section>
@@ -693,6 +715,11 @@ function LegacyAssignQuizModal({ quiz, onClose, onSaved, notify }: { quiz: Quiz;
   return <div className="modal-overlay" onClick={onClose}><section className="assignment-modal" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Assign quiz</span><h2>{quiz.title}</h2><p>Select students and set their attempt limit.</p></div><button className="icon-button" onClick={onClose} aria-label="Close assignment"><X size={18} /></button></div><div className="assignment-modal-toolbar"><div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search students" /></div><label className="attempt-select">Attempts<select value={attemptLimit} onChange={(event) => setAttemptLimit(Number(event.target.value))}><option value="1">1 attempt</option><option value="2">2 attempts</option><option value="3">3 attempts</option><option value="5">5 attempts</option></select></label></div><div className="assignment-select-all"><label className="table-check"><input type="checkbox" checked={allSelected} onChange={toggleAll} /><span className="custom-check"><Check size={12} /></span></label><span>Select all visible students</span><strong>{selected.length} selected</strong></div><div className="assignment-student-list">{visible.map((student) => <label className={`assignment-student-row ${selected.includes(student.schoolId) ? 'selected' : ''}`} key={student.schoolId}><span className="table-check"><input type="checkbox" checked={selected.includes(student.schoolId)} onChange={() => setSelected((items) => items.includes(student.schoolId) ? items.filter((id) => id !== student.schoolId) : [...items, student.schoolId])} /><span className="custom-check"><Check size={12} /></span></span><span className="avatar avatar-tiny avatar-mint">{initials(student)}</span><span><strong>{displayName(student)}</strong><small>{student.schoolId}</small></span><span className="assignment-count">{student.assignmentCount ?? 0} assigned</span></label>)}{!visible.length && <div className="empty-state"><UsersRound size={22} /><strong>No students found</strong></div>}</div><div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={isSaving || !selected.length} onClick={() => void save()}>{isSaving ? 'Assigning...' : `Assign to ${selected.length || 0} students`} <ArrowRight size={15} /></button></div></section></div>
 }
 
+function ReporterPicker({ students, selected, onToggle }: { students: Student[]; selected: string[]; onToggle: (schoolId: string) => void }) {
+  const activeStudents = students.filter((student) => student.active !== false && student.accountReady !== false)
+  return <section className="form-card reporter-picker"><div className="questions-builder-heading"><div><span className="eyebrow">Quiz access</span><h3>Assign reporters <span className="heading-muted">{selected.length} selected</span></h3></div><UserCheck size={19} className="muted-icon" /></div><p className="builder-help-text">Reporters can view this quiz and its questions, but cannot answer, edit, or be assigned as students.</p>{activeStudents.length ? <div className="reporter-picker-list">{activeStudents.map((student) => <label className={`reporter-picker-row ${selected.includes(student.schoolId) ? 'selected' : ''}`} key={student.schoolId}><input type="checkbox" checked={selected.includes(student.schoolId)} onChange={() => onToggle(student.schoolId)} /><span className="custom-check"><Check size={12} /></span><StudentAvatar student={student} className="avatar avatar-tiny avatar-mint" /><span><strong>{displayName(student)}</strong><small>{student.schoolId}</small></span></label>)}</div> : <div className="empty-state compact-empty-state"><UsersRound size={21} /><strong>No active students</strong><span>Add a student to the roster before assigning reporters.</span></div>}</section>
+}
+
 function AdminBuilderWorkspace({ isNew, quiz, onNavigate, onSaved, notify }: { isNew: boolean; quiz: Quiz | null; onNavigate: (view: AdminView) => void; onSaved: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
   const [title, setTitle] = useState(isNew ? '' : quiz?.title ?? '')
   const [subject, setSubject] = useState(isNew ? DEFAULT_SUBJECT : quiz?.subject ?? DEFAULT_SUBJECT)
@@ -703,11 +730,17 @@ function AdminBuilderWorkspace({ isNew, quiz, onNavigate, onSaved, notify }: { i
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [newSubject, setNewSubject] = useState('')
   const [showNewSubject, setShowNewSubject] = useState(false)
+  const [reporterStudents, setReporterStudents] = useState<Student[]>([])
+  const [reporterIds, setReporterIds] = useState<string[]>([])
   const [openQuestion, setOpenQuestion] = useState<string | null>(parts[0]?.questions[0]?.id ?? null)
   const [isSaving, setIsSaving] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   useEffect(() => { loadSubjects().then((loaded) => setSubjects(loaded.length ? loaded : [{ id: 'default', name: DEFAULT_SUBJECT }])).catch(() => setSubjects([{ id: 'default', name: DEFAULT_SUBJECT }])) }, [])
+  useEffect(() => {
+    void loadAdminRoster().then(setReporterStudents).catch(() => setReporterStudents([]))
+    if (quiz?.id) void loadQuizCollaborators(quiz.id).then((result) => { if (!result.error) setReporterIds(result.data) }).catch(() => setReporterIds([]))
+  }, [quiz?.id])
   const totalQuestions = parts.reduce((sum, part) => sum + part.questions.length, 0)
   const totalPoints = parts.reduce((sum, part) => sum + part.questions.reduce((partSum, question) => partSum + Number(question.points || 0), 0), 0)
   const updatePart = (partId: string, patch: Partial<QuizPart>) => setParts((current) => current.map((part) => part.id === partId ? { ...part, ...patch } : part))
@@ -719,8 +752,8 @@ function AdminBuilderWorkspace({ isNew, quiz, onNavigate, onSaved, notify }: { i
   const moveQuestion = (partId: string, index: number, direction: -1 | 1) => setParts((current) => current.map((part) => { if (part.id !== partId) return part; const target = index + direction; if (target < 0 || target >= part.questions.length) return part; const questions = [...part.questions]; const [moved] = questions.splice(index, 1); questions.splice(target, 0, moved); return { ...part, questions: questions.map((question, questionIndex) => ({ ...question, partPosition: questionIndex + 1 })) } }))
   const addSubject = async () => { if (!newSubject.trim()) return; const result = await createSubject(newSubject); if (result.error) return notify({ tone: 'warning', title: 'Subject could not be added', message: result.error.message }); setSubject(newSubject.trim()); setNewSubject(''); setShowNewSubject(false); setSubjects(await loadSubjects()); notify({ tone: 'success', title: 'Subject added' }) }
   const handleImport = async (file: File) => { setIsImporting(true); try { const imported = await importQuizPdf(file); setTitle(imported.title); setDescription(imported.description); setParts(imported.parts); setOpenQuestion(imported.parts[0]?.questions[0]?.id ?? null); notify({ tone: imported.warnings.length ? 'warning' : 'success', title: imported.warnings.length ? 'PDF imported with notes' : 'PDF imported', message: imported.warnings.join(' ') || 'Review the imported questions before saving.' }) } catch (error) { notify({ tone: 'warning', title: 'Could not import PDF', message: (error as Error).message }) } finally { setIsImporting(false); if (fileInput.current) fileInput.current.value = '' } }
-  const save = async (publish: boolean) => { if (!title.trim() || !subject || !parts.length || parts.some((part) => !part.title.trim() || !part.questions.length) || parts.some((part) => part.questions.some((question) => !question.prompt.trim()))) return notify({ tone: 'warning', title: 'Complete the quiz details', message: 'Add a title, subject, part titles, and question prompts.' }); if (parts.some((part) => part.questions.some((question) => question.type === 'multiple-choice' && ((!question.options?.length || question.options.some((option) => !option.trim())) || !question.answer?.trim())))) return notify({ tone: 'warning', title: 'Complete the answer choices', message: 'Multiple-choice questions need options and a correct answer.' }); setIsSaving(true); const result = await saveQuiz({ id: quiz?.id, title, subject, description, passingScore: Number(passingScore) || 75, durationMinutes: Number(durationMinutes) || 30, status: publish ? 'published' : 'draft', parts }); setIsSaving(false); if (result.error) return notify({ tone: 'warning', title: publish ? 'Could not publish quiz' : 'Could not save quiz', message: result.error.message }); notify({ tone: 'success', title: publish ? 'Quiz published' : 'Draft saved' }); await onSaved() }
-  return <div className="builder-page"><div className="builder-toolbar"><button className="back-link" onClick={() => onNavigate('quizzes')}><ArrowLeft size={16} /> Back to quiz library</button><div className="builder-actions"><input ref={fileInput} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImport(file) }} /><button className="button button-secondary" onClick={() => fileInput.current?.click()} disabled={isImporting}><FileUp size={15} /> {isImporting ? 'Reading PDF...' : 'Import PDF'}</button><button className="button button-secondary" onClick={() => void save(false)} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save draft'}</button><button className="button button-primary" onClick={() => void save(true)} disabled={isSaving}><Send size={15} /> {isSaving ? 'Publishing...' : 'Publish quiz'}</button></div></div><div className="builder-layout"><section className="builder-main"><div className="form-card builder-details-card"><div className="form-card-heading"><div><span className="eyebrow">Quiz details</span><h3>{isNew ? 'Start with the basics' : title || 'Edit quiz'}</h3></div><StatusBadge tone="warning">Draft changes</StatusBadge></div><div className="builder-fields"><div><label className="field-label">Quiz title</label><input className="form-input form-input-large" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Data Representation & CPU" /></div><div className="two-field-grid"><div><label className="field-label">Subject</label><div className="select-wrap"><select className="form-input" value={subject} onChange={(event) => setSubject(event.target.value)}>{subjects.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select><ChevronDown size={16} /></div>{showNewSubject ? <div className="inline-add-row"><input className="form-input" value={newSubject} onChange={(event) => setNewSubject(event.target.value)} placeholder="New subject name" /><button className="button button-small button-primary" onClick={() => void addSubject()}>Add</button></div> : <button className="text-button subject-add-button" onClick={() => setShowNewSubject(true)}><Plus size={13} /> Add subject</button>}</div><div><label className="field-label">Passing score</label><div className="input-suffix"><input className="form-input" value={passingScore} onChange={(event) => setPassingScore(event.target.value)} inputMode="numeric" /><span>%</span></div></div></div><div className="two-field-grid"><div><label className="field-label">Time to answer</label><div className="input-suffix"><input className="form-input" type="number" min="1" max="1440" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} /><span>min</span></div></div><div><label className="field-label">Total points</label><div className="readonly-input"><ListChecks size={16} /> {totalPoints} points</div></div></div><div><label className="field-label">Instructions for students</label><textarea className="form-input" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Add a short note about what students should prepare..." /></div></div></div><section className="form-card"><div className="questions-builder-heading"><div><span className="eyebrow">Structure</span><h3>Parts and questions <span className="heading-muted">{parts.length} parts . {totalQuestions} questions</span></h3></div><button className="button button-secondary" onClick={addPart}><Plus size={15} /> Add part</button></div></section>{parts.map((part, partIndex) => <section className="form-card part-card" key={part.id}><div className="part-card-heading"><div className="part-heading-copy"><span className="eyebrow">Part {partIndex + 1}</span><input className="part-title-input" value={part.title} onChange={(event) => updatePart(part.id, { title: event.target.value })} /></div><div className="part-card-actions"><span className="part-total">{part.questions.length} questions</span><button className="icon-button" onClick={() => removePart(part.id)} aria-label="Remove part"><X size={16} /></button></div></div><div className="builder-question-list">{part.questions.map((question, index) => <BuilderQuestion key={question.id} question={question} index={index} isOpen={openQuestion === question.id} onToggle={() => setOpenQuestion(openQuestion === question.id ? null : question.id)} onUpdate={(patch) => updateQuestion(part.id, question.id, patch)} onRemove={() => removeQuestion(part.id, question.id)} onMoveUp={() => moveQuestion(part.id, index, -1)} onMoveDown={() => moveQuestion(part.id, index, 1)} />)}</div><button className="text-button with-icon builder-add-question" onClick={() => addQuestion(part.id)}><Plus size={15} /> Add question to this part</button></section>)}</section><aside className="builder-aside"><section className="builder-summary-card"><div className="summary-art"><ListChecks size={19} /></div><span className="eyebrow">Assessment summary</span><h3>Ready for review.</h3><p>Imported content stays editable until you save or publish it.</p><div className="checklist"><div className={`checklist-item ${title.trim() ? 'done' : ''}`}><Check size={12} /> Quiz title added</div><div className={`checklist-item ${totalQuestions ? 'done' : ''}`}><Check size={12} /> Questions added</div><div className={`checklist-item ${totalPoints > 0 ? 'done' : ''}`}><Check size={12} /> Points configured</div></div></section><section className="builder-tip"><FileText size={16} /><div><strong>Default time</strong><span>New quizzes start with a 30-minute limit. You can change it above.</span></div></section></aside></div></div>
+  const save = async (publish: boolean) => { if (!title.trim() || !subject || !parts.length || parts.some((part) => !part.title.trim() || !part.questions.length) || parts.some((part) => part.questions.some((question) => !question.prompt.trim()))) return notify({ tone: 'warning', title: 'Complete the quiz details', message: 'Add a title, subject, part titles, and question prompts.' }); if (parts.some((part) => part.questions.some((question) => question.type === 'multiple-choice' && ((!question.options?.length || question.options.some((option) => !option.trim())) || !question.answer?.trim())))) return notify({ tone: 'warning', title: 'Complete the answer choices', message: 'Multiple-choice questions need options and a correct answer.' }); setIsSaving(true); const result = await saveQuiz({ id: quiz?.id, title, subject, description, passingScore: Number(passingScore) || 75, durationMinutes: Number(durationMinutes) || 30, status: publish ? 'published' : 'draft', parts, collaboratorSchoolIds: reporterIds }); setIsSaving(false); if (result.error) return notify({ tone: 'warning', title: publish ? 'Could not publish quiz' : 'Could not save quiz', message: result.error.message }); notify({ tone: 'success', title: publish ? 'Quiz published' : 'Draft saved' }); await onSaved() }
+  return <div className="builder-page"><div className="builder-toolbar"><button className="back-link" onClick={() => onNavigate('quizzes')}><ArrowLeft size={16} /> Back to quiz library</button><div className="builder-actions"><input ref={fileInput} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImport(file) }} /><button className="button button-secondary" onClick={() => fileInput.current?.click()} disabled={isImporting}><FileUp size={15} /> {isImporting ? 'Reading PDF...' : 'Import PDF'}</button><button className="button button-secondary" onClick={() => void save(false)} disabled={isSaving}>{isSaving ? 'Saving...' : 'Save draft'}</button><button className="button button-primary" onClick={() => void save(true)} disabled={isSaving}><Send size={15} /> {isSaving ? 'Publishing...' : 'Publish quiz'}</button></div></div><div className="builder-layout"><section className="builder-main"><div className="form-card builder-details-card"><div className="form-card-heading"><div><span className="eyebrow">Quiz details</span><h3>{isNew ? 'Start with the basics' : title || 'Edit quiz'}</h3></div><StatusBadge tone="warning">Draft changes</StatusBadge></div><div className="builder-fields"><div><label className="field-label">Quiz title</label><input className="form-input form-input-large" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Data Representation & CPU" /></div><div className="two-field-grid"><div><label className="field-label">Subject</label><div className="select-wrap"><select className="form-input" value={subject} onChange={(event) => setSubject(event.target.value)}>{subjects.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select><ChevronDown size={16} /></div>{showNewSubject ? <div className="inline-add-row"><input className="form-input" value={newSubject} onChange={(event) => setNewSubject(event.target.value)} placeholder="New subject name" /><button className="button button-small button-primary" onClick={() => void addSubject()}>Add</button></div> : <button className="text-button subject-add-button" onClick={() => setShowNewSubject(true)}><Plus size={13} /> Add subject</button>}</div><div><label className="field-label">Passing score</label><div className="input-suffix"><input className="form-input" value={passingScore} onChange={(event) => setPassingScore(event.target.value)} inputMode="numeric" /><span>%</span></div></div></div><div className="two-field-grid"><div><label className="field-label">Time to answer</label><div className="input-suffix"><input className="form-input" type="number" min="1" max="1440" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} /><span>min</span></div></div><div><label className="field-label">Total points</label><div className="readonly-input"><ListChecks size={16} /> {totalPoints} points</div></div></div><div><label className="field-label">Instructions for students</label><textarea className="form-input" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Add a short note about what students should prepare..." /></div></div></div><ReporterPicker students={reporterStudents} selected={reporterIds} onToggle={(schoolId) => setReporterIds((current) => current.includes(schoolId) ? current.filter((id) => id !== schoolId) : [...current, schoolId])} /><section className="form-card"><div className="questions-builder-heading"><div><span className="eyebrow">Structure</span><h3>Parts and questions <span className="heading-muted">{parts.length} parts . {totalQuestions} questions</span></h3></div><button className="button button-secondary" onClick={addPart}><Plus size={15} /> Add part</button></div></section>{parts.map((part, partIndex) => <section className="form-card part-card" key={part.id}><div className="part-card-heading"><div className="part-heading-copy"><span className="eyebrow">Part {partIndex + 1}</span><input className="part-title-input" value={part.title} onChange={(event) => updatePart(part.id, { title: event.target.value })} /></div><div className="part-card-actions"><span className="part-total">{part.questions.length} questions</span><button className="icon-button" onClick={() => removePart(part.id)} aria-label="Remove part"><X size={16} /></button></div></div><div className="builder-question-list">{part.questions.map((question, index) => <BuilderQuestion key={question.id} question={question} index={index} isOpen={openQuestion === question.id} onToggle={() => setOpenQuestion(openQuestion === question.id ? null : question.id)} onUpdate={(patch) => updateQuestion(part.id, question.id, patch)} onRemove={() => removeQuestion(part.id, question.id)} onMoveUp={() => moveQuestion(part.id, index, -1)} onMoveDown={() => moveQuestion(part.id, index, 1)} />)}</div><button className="text-button with-icon builder-add-question" onClick={() => addQuestion(part.id)}><Plus size={15} /> Add question to this part</button></section>)}</section><aside className="builder-aside"><section className="builder-summary-card"><div className="summary-art"><ListChecks size={19} /></div><span className="eyebrow">Assessment summary</span><h3>Ready for review.</h3><p>Imported content stays editable until you save or publish it.</p><div className="checklist"><div className={`checklist-item ${title.trim() ? 'done' : ''}`}><Check size={12} /> Quiz title added</div><div className={`checklist-item ${totalQuestions ? 'done' : ''}`}><Check size={12} /> Questions added</div><div className={`checklist-item ${totalPoints > 0 ? 'done' : ''}`}><Check size={12} /> Points configured</div></div></section><section className="builder-tip"><FileText size={16} /><div><strong>Default time</strong><span>New quizzes start with a 30-minute limit. You can change it above.</span></div></section></aside></div></div>
 }
 
 function initialParts(quiz: Quiz | null, isNew: boolean): QuizPart[] {
@@ -755,7 +788,7 @@ function AdminStudentsPage({ focusStudentId, notify }: { focusStudentId: string 
 function StudentModal({ student, isNew, isSaving, onClose, onSave, onReset }: { student: Student; isNew: boolean; isSaving: boolean; onClose: () => void; onSave: (student: Student) => Promise<void>; onReset: () => void }) {
   const [value, setValue] = useState(student)
   const submit = (event: FormEvent) => { event.preventDefault(); void onSave(value) }
-  return <div className="modal-overlay" onClick={onClose}><section className="student-modal" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">{isNew ? 'Add student' : 'Student account'}</span><h2>{isNew ? 'Create roster record' : displayName(student)}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close student form"><X size={18} /></button></div><form className="settings-fields" onSubmit={submit}><div><label className="field-label">School ID</label><input className="form-input" value={value.schoolId} disabled={!isNew} onChange={(event) => setValue({ ...value, schoolId: event.target.value })} placeholder="24-00392" /></div><div className="two-field-grid"><div><label className="field-label">First and middle names</label><input className="form-input" value={value.firstNames} onChange={(event) => setValue({ ...value, firstNames: event.target.value })} /></div><div><label className="field-label">Last name</label><input className="form-input" value={value.lastName} onChange={(event) => setValue({ ...value, lastName: event.target.value })} /></div></div><label className="check-row"><input type="checkbox" checked={value.active !== false} onChange={(event) => setValue({ ...value, active: event.target.checked })} /><span className="custom-check"><Check size={12} /></span><span>Account is active</span></label><div className="info-callout"><ShieldCheck size={17} /><span>{isNew ? `New accounts start with ${DEFAULT_STUDENT_PASSWORD} and must change it after first login.` : 'Resetting a password restores the default password and requires a change at next login.'}</span></div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>{!isNew && <button type="button" className="button button-secondary" onClick={onReset}>Reset password</button>}<button type="submit" className="button button-primary" disabled={isSaving}>{isSaving ? 'Saving...' : isNew ? 'Add student' : 'Save changes'} <Check size={15} /></button></div></form></section></div>
+  return <div className="modal-overlay" onClick={onClose}><section className="student-modal" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">{isNew ? 'Add student' : 'Student account'}</span><h2>{isNew ? 'Create roster record' : displayName(student)}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close student form"><X size={18} /></button></div><form className="settings-fields" onSubmit={submit}><div><label className="field-label">School ID</label><input className="form-input" value={value.schoolId} disabled={!isNew} onChange={(event) => setValue({ ...value, schoolId: event.target.value })} placeholder="24-00000" /></div><div className="two-field-grid"><div><label className="field-label">First and middle names</label><input className="form-input" value={value.firstNames} onChange={(event) => setValue({ ...value, firstNames: event.target.value })} /></div><div><label className="field-label">Last name</label><input className="form-input" value={value.lastName} onChange={(event) => setValue({ ...value, lastName: event.target.value })} /></div></div><label className="check-row"><input type="checkbox" checked={value.active !== false} onChange={(event) => setValue({ ...value, active: event.target.checked })} /><span className="custom-check"><Check size={12} /></span><span>Account is active</span></label><div className="info-callout"><ShieldCheck size={17} /><span>{isNew ? `New accounts start with ${DEFAULT_STUDENT_PASSWORD} and must change it after first login.` : 'Resetting a password restores the default password and requires a change at next login.'}</span></div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>{!isNew && <button type="button" className="button button-secondary" onClick={onReset}>Reset password</button>}<button type="submit" className="button button-primary" disabled={isSaving}>{isSaving ? 'Saving...' : isNew ? 'Add student' : 'Save changes'} <Check size={15} /></button></div></form></section></div>
 }
 
 function submissionStatusLabel(status: Submission['status']) {
@@ -801,24 +834,48 @@ function compactPartScore(submission: Submission, part: SubmissionPartColumn) {
   return `${formatSubmissionPoints(score?.earned ?? 0)} / ${formatSubmissionPoints(possible)}`
 }
 
-function CompactSubmissionTable({ submissions, partColumns, onOpen }: { submissions: Submission[]; partColumns: SubmissionPartColumn[]; onOpen: (submission: Submission) => void }) {
-  const gridTemplateColumns = `minmax(180px, 1.45fr) repeat(${partColumns.length}, minmax(90px, 1fr)) minmax(86px, 0.75fr)`
-  return <div className="submission-compact-scroll"><div className="submission-compact-table" style={{ gridTemplateColumns }}><div className="submission-compact-head" style={{ gridTemplateColumns }}><span>Student</span>{partColumns.map((part) => <span key={submissionPartKey(part.partId)}>{part.title}</span>)}<span>Total</span></div>{submissions.map((submission) => <button className="submission-compact-row" key={submission.id} type="button" style={{ gridTemplateColumns }} onClick={() => onOpen(submission)}><span className="submission-compact-student"><span className="avatar avatar-tiny avatar-mint">{initials(submission.student)}</span><strong>{submissionFullName(submission.student)}</strong></span>{partColumns.map((part) => <span key={submissionPartKey(part.partId)}>{compactPartScore(submission, part)}</span>)}<strong>{formatSubmissionPoints(submission.earnedPoints)} / {formatSubmissionPoints(submission.possiblePoints)}</strong></button>)}</div></div>
+type SubmissionDashboardEntry = {
+  student: Student
+  quizTitle: string
+  submission?: Submission
 }
 
-function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: ToastMessage) => void }) {
+function formatDuration(seconds: number | null | undefined) {
+  if (seconds === null || seconds === undefined) return '—'
+  const minutes = Math.floor(seconds / 60)
+  const remaining = seconds % 60
+  return minutes ? `${minutes}m ${remaining}s` : `${remaining}s`
+}
+
+function SubmissionDashboardModal({ category, entries, onClose }: { category: SubmissionDashboardCategory; entries: SubmissionDashboardEntry[]; onClose: () => void }) {
+  const labels: Record<SubmissionDashboardCategory, string> = {
+    assigned: 'Assigned students',
+    started: 'Students who started',
+    answered: 'Students who answered',
+    'not-answered': 'Students not yet answered',
+    'needs-review': 'Submissions needing review',
+  }
+  return <div className="modal-overlay" onClick={onClose}><section className="submission-status-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Submission dashboard</span><h2>{labels[category]}</h2><p>{entries.length} record{entries.length === 1 ? '' : 's'} in the selected quiz scope.</p></div><button className="icon-button" onClick={onClose} aria-label="Close student list"><X size={18} /></button></div><div className="submission-status-list">{entries.length ? entries.map((entry) => <div className="submission-status-row" key={`${entry.quizTitle}-${entry.student.schoolId}-${entry.submission?.id ?? category}`}><StudentAvatar student={entry.student} className="avatar avatar-tiny avatar-mint" /><div><strong>{displayName(entry.student)}</strong><span>{entry.student.schoolId} · {entry.quizTitle}</span></div>{entry.submission ? <div className="submission-status-row-meta"><span>{entry.submission.score !== null ? `${formatSubmissionPoints(entry.submission.earnedPoints)} / ${formatSubmissionPoints(entry.submission.possiblePoints)} pts` : submissionStatusLabel(entry.submission.status)}</span><small>{formatDuration(entry.submission.timeTakenSeconds)}</small></div> : <StatusBadge tone="neutral">Not started</StatusBadge>}</div>) : <div className="empty-state"><UsersRound size={22} /><strong>No students in this category</strong><span>Choose another quiz or dashboard filter.</span></div>}</div><div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Close</button></div></section></div>
+}
+
+function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast: ToastMessage) => void }) {
   const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [assignments, setAssignments] = useState<SubmissionAssignment[]>([])
+  const [students, setStudents] = useState<Student[]>([])
   const [filter, setFilter] = useState<'all' | Submission['status']>('all')
   const [search, setSearch] = useState('')
   const [quizFilter, setQuizFilter] = useState('all')
   const [selected, setSelected] = useState<Submission | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [compactView, setCompactView] = useState(false)
+  const [dashboardCategory, setDashboardCategory] = useState<SubmissionDashboardCategory | null>(null)
 
   const refresh = async () => {
     setIsLoading(true)
     try {
-      setSubmissions(await loadAdminSubmissions())
+      const [loadedSubmissions, loadedAssignments, loadedStudents] = await Promise.all([loadAdminSubmissions(), loadAdminAssignments(), loadAdminRoster()])
+      setSubmissions(loadedSubmissions)
+      setAssignments(loadedAssignments)
+      setStudents(loadedStudents)
     } catch (error) {
       notify({ tone: 'warning', title: 'Submissions could not load', message: (error as Error).message })
     } finally {
@@ -827,9 +884,9 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
   }
 
   useEffect(() => { void refresh() }, [])
-  useEffect(() => { if (quizFilter === 'all') setCompactView(false) }, [quizFilter])
 
-  const quizOptions = [...new Map(submissions.map((submission) => [submission.quizId, submission.quizTitle])).entries()]
+  const quizOptions = quizzes
+    .map((quiz) => [quiz.id, quiz.title] as const)
     .sort((left, right) => left[1].localeCompare(right[1], 'en', { sensitivity: 'base' }))
   const searchTerm = search.trim().toLowerCase()
   const filtered = submissions.filter((submission) => {
@@ -838,13 +895,33 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
     const matchesSearch = !searchTerm || `${submission.student.firstNames} ${submission.student.lastName} ${submission.student.schoolId} ${submission.quizTitle}`.toLowerCase().includes(searchTerm)
     return matchesStatus && matchesQuiz && matchesSearch
   })
-  const canUseCompactView = quizFilter !== 'all'
-  const compactPartColumns = [...new Map(
-    submissions
-      .filter((submission) => submission.quizId === quizFilter)
-      .flatMap((submission) => submission.partColumns)
-      .map((part) => [submissionPartKey(part.partId), part] as const),
-  ).values()].sort((left, right) => left.position - right.position)
+  const selectedQuiz = quizFilter === 'all' ? null : quizzes.find((quiz) => quiz.id === quizFilter) ?? null
+  const scopedAssignments = assignments.filter((assignment) => quizFilter === 'all' || assignment.quizId === quizFilter)
+  const scopedSubmissions = submissions.filter((submission) => quizFilter === 'all' || submission.quizId === quizFilter)
+  const quizTitleById = new Map(quizzes.map((quiz) => [quiz.id, quiz.title]))
+  const studentById = new Map(students.map((student) => [student.schoolId, student]))
+  const latestSubmissionByQuizStudent = new Map<string, Submission>()
+  for (const submission of scopedSubmissions) {
+    const key = `${submission.quizId}:${submission.student.schoolId}`
+    const current = latestSubmissionByQuizStudent.get(key)
+    if (!current || new Date(submission.startedAt).getTime() > new Date(current.startedAt).getTime()) latestSubmissionByQuizStudent.set(key, submission)
+  }
+  const assignmentEntries: SubmissionDashboardEntry[] = scopedAssignments.map((assignment) => ({
+    student: studentById.get(assignment.schoolId) ?? { schoolId: assignment.schoolId, firstNames: assignment.schoolId, lastName: '' },
+    quizTitle: quizTitleById.get(assignment.quizId) ?? 'Quiz',
+    submission: latestSubmissionByQuizStudent.get(`${assignment.quizId}:${assignment.schoolId}`),
+  }))
+  const startedEntries = assignmentEntries.filter((entry) => entry.submission)
+  const answeredEntries = startedEntries.filter((entry) => entry.submission?.status !== 'in-progress')
+  const notAnsweredEntries = assignmentEntries.filter((entry) => !entry.submission || entry.submission.status === 'in-progress')
+  const reviewEntries: SubmissionDashboardEntry[] = scopedSubmissions.filter((submission) => submission.status === 'needs-review').map((submission) => ({ student: submission.student, quizTitle: submission.quizTitle, submission }))
+  const dashboardMetrics: Array<{ id: SubmissionDashboardCategory; label: string; value: number; detail: string; tone: string }> = [
+    { id: 'assigned', label: 'Assigned', value: assignmentEntries.length, detail: 'Active assignments', tone: 'blue' },
+    { id: 'started', label: 'Taken', value: startedEntries.length, detail: 'Attempts started', tone: 'purple' },
+    { id: 'answered', label: 'Answered', value: answeredEntries.length, detail: 'Submitted attempts', tone: 'green' },
+    { id: 'not-answered', label: 'Not answered', value: notAnsweredEntries.length, detail: 'No submitted attempt', tone: 'peach' },
+    { id: 'needs-review', label: 'Needs review', value: reviewEntries.length, detail: 'Manual grading queue', tone: 'lavender' },
+  ]
   const filters: Array<{ id: 'all' | Submission['status']; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'needs-review', label: 'Needs review' },
@@ -858,6 +935,15 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
 }
 
   */
+  const exportReport = () => {
+    if (!selectedQuiz) {
+      notify({ tone: 'info', title: 'Select one quiz first', message: 'The PDF report uses the selected quiz and its part columns.' })
+      return
+    }
+    const assignedStudents = [...new Map(assignmentEntries.map((entry) => [entry.student.schoolId, entry.student])).values()]
+    if (!exportSubmissionReportPdf(selectedQuiz, assignedStudents, scopedSubmissions)) notify({ tone: 'warning', title: 'PDF window blocked', message: 'Allow pop-ups for LateQuiz, then try exporting again.' })
+  }
+
   return (
     <div className="content-stack">
       <section className="page-intro-row admin-page-intro">
@@ -866,7 +952,7 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
           <h2>Student submissions.</h2>
           <p>Review every taken exam, correct grading decisions, and keep the record accurate.</p>
         </div>
-        <span className="submission-total">{submissions.length} attempt{submissions.length === 1 ? '' : 's'}</span>
+        <div className="submission-header-actions"><span className="submission-total">{submissions.length} attempt{submissions.length === 1 ? '' : 's'}</span><button className="button button-secondary" disabled={!selectedQuiz} onClick={exportReport}><Download size={15} /> Export PDF</button></div>
       </section>
       <section className="submission-toolbar">
         <div className="filter-tabs compact-tabs">
@@ -875,18 +961,19 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
         <div className="submission-filters">
           <div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search student or quiz" /></div>
           <label className="submission-quiz-filter"><span className="visually-hidden">Filter by quiz</span><select value={quizFilter} onChange={(event) => setQuizFilter(event.target.value)}><option value="all">All quizzes</option>{quizOptions.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select><ChevronDown size={15} /></label>
-          <button className="button button-secondary submission-layout-toggle" disabled={!canUseCompactView} aria-pressed={compactView} title={canUseCompactView ? 'Toggle compact score columns' : 'Select one quiz to use compact columns'} onClick={() => setCompactView((value) => !value)}>{compactView ? 'Full layout' : 'Compact layout'}</button>
         </div>
       </section>
+      <section className="submission-dashboard-grid">{dashboardMetrics.map((metric) => <button key={metric.id} className="submission-dashboard-card" onClick={() => setDashboardCategory(metric.id)}><span className={`submission-dashboard-icon submission-dashboard-icon-${metric.tone}`}>{metric.id === 'assigned' ? <UsersRound size={17} /> : metric.id === 'started' ? <Clock3 size={17} /> : metric.id === 'answered' ? <CheckCheck size={17} /> : metric.id === 'not-answered' ? <CircleAlert size={17} /> : <ClipboardCheck size={17} />}</span><span><strong>{metric.value}</strong><small>{metric.label}</small><em>{metric.detail}</em></span></button>)}</section>
       <section className="submission-table-card">
-        {isLoading ? <div className="empty-state"><ClipboardCheck size={24} /><strong>Loading submissions...</strong><span>Fetching taken exams from the workspace.</span></div> : filtered.length ? compactView && canUseCompactView ? <CompactSubmissionTable submissions={filtered} partColumns={compactPartColumns} onOpen={setSelected} /> : <>
-          <div className="submission-table-head"><span>Student</span><span>Quiz</span><span>Status</span><span>Submitted</span><span>Score</span><span /></div>
+        {isLoading ? <div className="empty-state"><LoaderCircle className="spin" size={24} /><strong>Loading submissions...</strong><span>Fetching attempts and assignments from the workspace.</span></div> : filtered.length ? <>
+          <div className="submission-table-head"><span>Student</span><span>Quiz</span><span>Status</span><span>Submitted</span><span>Time taken</span><span>Score</span><span /></div>
           <div className="submission-table">
             {filtered.map((submission) => <div className="submission-row submission-row-full" key={submission.id}>
               <div className="submission-student"><span className="avatar avatar-tiny avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId}</span></div></div>
               <div className="submission-quiz"><strong>{submission.quizTitle}</strong><span>Attempt {submission.attemptNumber} · {submission.quizSubject}</span></div>
               <StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge>
               <span className="submission-date">{submissionDate(submission.submittedAt)}</span>
+              <span className="submission-date">{formatDuration(submission.timeTakenSeconds)}</span>
               <div className="submission-score"><strong>{submission.score !== null ? `${submission.score}%` : `${submission.autoScore}% auto`}</strong><span>{submission.earnedPoints} / {submission.possiblePoints} pts</span></div>
               <button className="button button-small button-secondary" onClick={() => setSelected(submission)}>{submission.status === 'in-progress' ? 'View' : 'Review'}</button>
             </div>)}
@@ -894,6 +981,7 @@ function AdminSubmissions({ notify = () => undefined }: { notify?: (toast: Toast
         </> : <div className="empty-state"><ClipboardCheck size={24} /><strong>No submissions found</strong><span>Try a different status, quiz, or search term.</span></div>}
       </section>
       {selected && <SubmissionReviewDrawer submission={selected} notify={notify} onClose={() => setSelected(null)} onSaved={async () => { await refresh(); setSelected(null) }} onDeleted={async () => { await refresh(); setSelected(null) }} />}
+      {dashboardCategory && <SubmissionDashboardModal category={dashboardCategory} entries={dashboardCategory === 'assigned' ? assignmentEntries : dashboardCategory === 'started' ? startedEntries : dashboardCategory === 'answered' ? answeredEntries : dashboardCategory === 'not-answered' ? notAnsweredEntries : reviewEntries} onClose={() => setDashboardCategory(null)} />}
     </div>
   )
 }
@@ -931,7 +1019,7 @@ function SubmissionReviewDrawer({ submission, notify, onClose, onSaved, onDelete
   }
 
   const earnedPoints = answers.reduce((sum, answer) => sum + Number(answer.pointsAwarded || 0), 0)
-  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div><div className="student-answer"><span>Answer:</span><strong>{answer.answer || 'No answer submitted'}</strong></div><div className="correct-answer"><span>Correct answer:</span><strong>{answer.correctAnswer || 'No fixed answer provided'}</strong></div><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked, ...(event.target.checked ? { pointsAwarded: answer.points } : {}) })} /><span>Mark correct</span></label></div></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
+  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div><div><span>Time taken</span><strong>{formatDuration(submission.timeTakenSeconds)}</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div><div className="student-answer"><span>Answer:</span><strong>{answer.answer || 'No answer submitted'}</strong></div><div className="correct-answer"><span>Correct answer:</span><strong>{answer.correctAnswer || 'No fixed answer provided'}</strong></div><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked, ...(event.target.checked ? { pointsAwarded: answer.points } : {}) })} /><span>Mark correct</span></label></div></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
 }
 
 function AuthLoadingScreen() {
@@ -1058,11 +1146,11 @@ function AuthScreen({ route, onNavigate, onLogin, notify }: { route: AuthRoute; 
 
   return <main className={`auth-page auth-enter ${isAdmin ? 'auth-page-admin' : ''}`}>
     <section className="auth-visual"><Brand dark /><div className="auth-visual-copy"><span className="eyebrow eyebrow-light">{isAdmin ? 'A clear command center' : 'A softer way back on track'}</span><h1>{isAdmin ? <>Keep every<br /><em>quiz moving.</em></> : <>One late quiz<br /><em>at a time.</em></>}</h1><p>{isAdmin ? 'Manage students, publish assessments, and give every submission the attention it deserves.' : 'Pick up where you left off, see exactly what to improve, and keep your term moving forward.'}</p></div><div className="auth-quote"><Sparkles size={18} /><span>{isAdmin ? 'Simple tools for focused review.' : 'Built for progress, not pressure.'}</span></div><div className="auth-visual-decoration"><div className="floating-note note-one"><Check size={15} /><span>{isAdmin ? 'Publish with confidence' : 'Small steps count'}</span></div><div className="floating-note note-two"><Target size={15} /><span>{isAdmin ? 'Students stay on track' : '75% goal in sight'}</span></div><div className="visual-ring ring-one" /><div className="visual-ring ring-two" /></div></section>
-    <section className="auth-panel"><div className="auth-panel-inner"><div className="mobile-brand"><Brand /></div><div className="auth-heading"><span className="eyebrow">{isAdmin ? 'Administrator access' : 'Student portal'}</span><h2>{isForgot ? 'Request a password reset' : isAdmin ? 'Admin workspace' : 'Sign in to continue'}</h2><p>{isForgot ? 'Enter your school ID and your administrator will receive a reset request.' : isAdmin ? 'Review submissions, manage assignments, and keep students moving.' : 'Your school ID is your key to every assigned quiz.'}</p></div>{isForgot ? <form className="reset-card" onSubmit={submitResetRequest}><div className="reset-icon"><ShieldCheck size={22} /></div><h3>Ask your administrator</h3><p>Your account will be reset to the default password after your administrator approves the request.</p><label className="field-label" htmlFor="reset-school-id">School ID</label><div className="input-wrap"><UserRound size={18} /><input id="reset-school-id" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="e.g. 24-00392" /></div><button className="button button-primary button-full" disabled={isLoading} type="submit">{isLoading ? 'Sending...' : 'Send reset request'} <Send size={15} /></button><button className="button button-secondary button-full" type="button" onClick={() => setIsForgot(false)}>Back to login</button></form> : <form className="auth-form" onSubmit={submit}><label className="field-label" htmlFor="identity">{isAdmin ? 'Admin username' : 'School ID'}</label><div className="input-wrap"><UserRound size={18} /><input id="identity" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder={isAdmin ? 'Enter admin username' : 'e.g. 24-00392'} autoComplete="username" /></div><div className="field-label-row"><label className="field-label" htmlFor="password">Password</label>{!isAdmin && <button type="button" className="text-button" onClick={() => setIsForgot(true)}>Forgot password?</button>}</div><div className="input-wrap"><LockIcon /><input id="password" value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? 'text' : 'password'} placeholder="Enter your password" autoComplete="current-password" /><button type="button" className="input-action" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>{!isAdmin && <p className="auth-hint">New or reset student accounts start with the default password provided by your administrator.</p>}<button className="button button-primary button-full button-large" disabled={isLoading} type="submit">{isLoading ? 'Checking...' : isAdmin ? 'Enter admin workspace' : 'Continue'} <ArrowRight size={17} /></button></form>}<div className="auth-route-switch">{isAdmin ? <><span>Student account?</span><button className="text-button" onClick={() => onNavigate('student')}>Use student login</button></> : <><span>Are you an administrator?</span><button className="button button-secondary" onClick={() => onNavigate('admin')}><ShieldCheck size={14} /> Admin login</button></>}</div><p className="auth-footer">Need help? Contact your LateQuiz administrator.</p></div></section>
+    <section className="auth-panel"><div className="auth-panel-inner"><div className="mobile-brand"><Brand /></div><div className="auth-heading"><span className="eyebrow">{isAdmin ? 'Administrator access' : 'Student portal'}</span><h2>{isForgot ? 'Request a password reset' : isAdmin ? 'Admin workspace' : 'Sign in to continue'}</h2><p>{isForgot ? 'Enter your school ID and your administrator will receive a reset request.' : isAdmin ? 'Review submissions, manage assignments, and keep students moving.' : 'Your school ID is your key to every assigned quiz.'}</p></div>{isForgot ? <form className="reset-card" onSubmit={submitResetRequest}><div className="reset-icon"><ShieldCheck size={22} /></div><h3>Ask your administrator</h3><p>Your account will be reset to the default password after your administrator approves the request.</p><label className="field-label" htmlFor="reset-school-id">School ID</label><div className="input-wrap"><UserRound size={18} /><input id="reset-school-id" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="e.g. 24-00000" /></div><button className="button button-primary button-full" disabled={isLoading} type="submit">{isLoading ? 'Sending...' : 'Send reset request'} <Send size={15} /></button><button className="button button-secondary button-full" type="button" onClick={() => setIsForgot(false)}>Back to login</button></form> : <form className="auth-form" onSubmit={submit}><label className="field-label" htmlFor="identity">{isAdmin ? 'Admin username' : 'School ID'}</label><div className="input-wrap"><UserRound size={18} /><input id="identity" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder={isAdmin ? 'Enter admin username' : 'e.g. 24-00000'} autoComplete="username" /></div><div className="field-label-row"><label className="field-label" htmlFor="password">Password</label>{!isAdmin && <button type="button" className="text-button" onClick={() => setIsForgot(true)}>Forgot password?</button>}</div><div className="input-wrap"><LockIcon /><input id="password" value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? 'text' : 'password'} placeholder="Enter your password" autoComplete="current-password" /><button type="button" className="input-action" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>{!isAdmin && <p className="auth-hint">New or reset student accounts start with the default password provided by your administrator.</p>}<button className="button button-primary button-full button-large" disabled={isLoading} type="submit">{isLoading ? 'Checking...' : isAdmin ? 'Enter admin workspace' : 'Continue'} <ArrowRight size={17} /></button></form>}<div className="auth-route-switch">{isAdmin ? <><span>Student account?</span><button className="text-button" onClick={() => onNavigate('student')}>Use student login</button></> : <><span>Are you an administrator?</span><button className="button button-secondary" onClick={() => onNavigate('admin')}><ShieldCheck size={14} /> Admin login</button></>}</div><p className="auth-footer">Need help? Contact your LateQuiz administrator.</p></div></section>
   </main>
 }
 
-function PasswordChangePage({ student, onComplete, onLogout, notify }: { student: Student; onComplete: () => void; onLogout: () => void; notify: (toast: ToastMessage) => void }) {
+function PasswordChangePage({ role, student, onComplete, onLogout, notify }: { role: Role; student: Student | null; onComplete: () => void; onLogout: () => void; notify: (toast: ToastMessage) => void }) {
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -1078,7 +1166,8 @@ function PasswordChangePage({ student, onComplete, onLogout, notify }: { student
     notify({ tone: 'success', title: 'Password updated', message: 'Your account is ready.' })
     onComplete()
   }
-  return <main className="password-gate"><section className="password-gate-card"><Brand /><div className="reset-icon"><ShieldCheck size={22} /></div><span className="eyebrow eyebrow-accent">First sign-in</span><h1>Choose your private password.</h1><p>Welcome, {displayName(student).split(' ')[0]}. For your protection, change the default password before entering your quizzes.</p><form className="auth-form" onSubmit={submit}><label className="field-label" htmlFor="new-password">New password</label><input className="form-input" id="new-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" /><label className="field-label" htmlFor="confirm-password">Confirm new password</label><input className="form-input" id="confirm-password" type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" /><button className="button button-primary button-full" disabled={isSaving} type="submit">{isSaving ? 'Saving...' : 'Save password'} <ArrowRight size={16} /></button></form><button className="text-button" onClick={onLogout}>Sign out</button></section></main>
+  const name = student ? displayName(student).split(' ')[0] : 'there'
+  return <main className="password-gate"><section className="password-gate-card"><Brand /><div className="reset-icon"><ShieldCheck size={22} /></div><span className="eyebrow eyebrow-accent">First sign-in</span><h1>Choose your private password.</h1><p>Welcome, {name}. For your protection, change the default password before entering your {role === 'admin' ? 'workspace' : 'quizzes'}.</p><form className="auth-form" onSubmit={submit}><label className="field-label" htmlFor="new-password">New password</label><input className="form-input" id="new-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" /><label className="field-label" htmlFor="confirm-password">Confirm new password</label><input className="form-input" id="confirm-password" type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" /><button className="button button-primary button-full" disabled={isSaving} type="submit">{isSaving ? 'Saving...' : 'Save password'} <ArrowRight size={16} /></button></form><button className="text-button" onClick={onLogout}>Sign out</button></section></main>
 }
 
 function Sidebar({ role, active, onNavigate, onLogout, student, mobileOpen, onClose, disabled = false }: { role: Role; active: string; onNavigate: (view: string) => void; onLogout: () => void; student?: Student; mobileOpen: boolean; onClose: () => void; disabled?: boolean }) {
@@ -1092,7 +1181,7 @@ function StudentApp({ student, view, quiz, quizzes, scores, onNavigate, onOpenQu
   const answering = view === 'quiz'
   const title = view === 'dashboard' ? 'Your recovery plan' : view === 'quizzes' ? 'Your quizzes' : view === 'quiz' ? quiz?.title ?? 'Quiz workspace' : view === 'scores' ? 'Your scores' : 'Account settings'
   const eyebrow = view === 'dashboard' ? 'Student workspace' : view === 'quizzes' ? 'Assessment library' : view === 'quiz' ? quiz?.subject ?? DEFAULT_SUBJECT : view === 'scores' ? 'Progress history' : 'Personal settings'
-  return <div className="app-shell"><Sidebar role="student" active={view} student={student} disabled={answering} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as StudentView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" disabled={answering} onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><button className="icon-button topbar-help" disabled={answering} onClick={() => notify({ tone: 'info', title: 'Need help?', message: 'Contact your LateQuiz administrator.' })} aria-label="Help"><HelpCircle size={19} /></button><button className="avatar avatar-small" disabled={answering} aria-label="Open account" onClick={() => onNavigate('account')}>{student.avatar ? <img className="avatar-image" src={student.avatar} alt="" /> : initials(student)}</button></div></header><main className="page-content">{view === 'dashboard' && <StudentDashboard student={student} quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} onNavigate={onNavigate} />}{view === 'quizzes' && <StudentQuizzesPage quizzes={quizzes} onOpenQuiz={onOpenQuiz} />}{view === 'quiz' && quiz && <StudentQuiz student={student} schoolId={student.schoolId} quiz={quiz} onExit={() => onNavigate('dashboard')} onRefreshWorkspace={onRefreshWorkspace} notify={notify} />}{view === 'scores' && <StudentScoresPage quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} />}{view === 'account' && <StudentAccount student={student} onStudentUpdate={onStudentUpdate} notify={notify} />}</main></div></div>
+  return <div className="app-shell"><Sidebar role="student" active={view} student={student} disabled={answering} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as StudentView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" disabled={answering} onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><button className="icon-button topbar-help" disabled={answering} onClick={() => notify({ tone: 'info', title: 'Need help?', message: 'Contact your LateQuiz administrator.' })} aria-label="Help"><HelpCircle size={19} /></button><button className="avatar avatar-small" disabled={answering} aria-label="Open account" onClick={() => onNavigate('account')}>{student.avatar ? <img className="avatar-image" src={student.avatar} alt="" /> : initials(student)}</button></div></header><main className="page-content">{view === 'dashboard' && <StudentDashboard student={student} quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} onNavigate={onNavigate} />}{view === 'quizzes' && <StudentQuizzesPage quizzes={quizzes} onOpenQuiz={onOpenQuiz} />}{view === 'quiz' && quiz && <StudentQuiz student={student} schoolId={student.schoolId} quiz={quiz} onExit={() => onNavigate(quiz.status === 'reported' ? 'quizzes' : 'dashboard')} onRefreshWorkspace={onRefreshWorkspace} notify={notify} />}{view === 'scores' && <StudentScoresPage quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} />}{view === 'account' && <StudentAccount student={student} onStudentUpdate={onStudentUpdate} notify={notify} />}</main></div></div>
 }
 
 function StudentDashboard({ student, quizzes, scores, onOpenQuiz, onNavigate }: { student: Student; quizzes: Quiz[]; scores: ScoreRecord[]; onOpenQuiz: (quiz: Quiz) => void; onNavigate: (view: StudentView) => void }) {
@@ -1117,10 +1206,11 @@ function StudentQuizCardV2({ quiz, onOpen }: { quiz: Quiz; onOpen: (quiz: Quiz) 
   const locked = quiz.status === 'locked'
   const complete = quiz.status === 'completed'
   const awaitingReview = quiz.status === 'in-review'
-  return <article className={`quiz-card quiz-card-${quizCardTone(quiz.subject)} ${locked ? 'quiz-card-locked' : ''}`}><div className="quiz-card-icon"><BookOpen size={19} /></div><div className="quiz-card-content"><div className="quiz-card-meta"><span>{quiz.subject}</span>{complete ? <StatusBadge tone="success">Completed</StatusBadge> : awaitingReview ? <StatusBadge tone="warning">Awaiting review</StatusBadge> : locked ? <StatusBadge tone="neutral" icon={<LockKeyhole size={11} />}>Not assigned</StatusBadge> : <StatusBadge tone="warning">Ready</StatusBadge>}</div><h3>{quiz.title}</h3><p className="quiz-card-description">{quiz.description || 'No instructions added yet.'}</p><div className="quiz-card-details"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span></div></div>{complete && <div className="card-score"><strong>{quiz.score !== undefined ? `${quiz.score}%` : quiz.earnedPoints !== undefined && quiz.possiblePoints !== undefined ? `${quiz.earnedPoints} / ${quiz.possiblePoints}` : '--'}</strong><span>{quiz.score !== undefined ? `${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts` : 'score'}</span></div>}<button className={`icon-button card-arrow ${locked ? 'is-locked' : ''}`} onClick={() => onOpen(quiz)} aria-label={locked ? 'Quiz not assigned' : `Open ${quiz.title}`}>{locked ? <LockKeyhole size={17} /> : <ArrowUpRight size={18} />}</button></article>
+  const reporter = quiz.status === 'reported'
+  return <article className={`quiz-card quiz-card-${quizCardTone(quiz.subject)} ${locked ? 'quiz-card-locked' : ''}`}><div className="quiz-card-icon"><BookOpen size={19} /></div><div className="quiz-card-content"><div className="quiz-card-meta"><span>{quiz.subject}</span>{complete ? <StatusBadge tone="success">Completed</StatusBadge> : awaitingReview ? <StatusBadge tone="warning">Awaiting review</StatusBadge> : reporter ? <StatusBadge tone="purple">Reporter access</StatusBadge> : locked ? <StatusBadge tone="neutral" icon={<LockKeyhole size={11} />}>Not assigned</StatusBadge> : <StatusBadge tone="warning">Ready</StatusBadge>}</div><h3>{quiz.title}</h3><p className="quiz-card-description">{quiz.description || 'No instructions added yet.'}</p><div className="quiz-card-details"><span><ListChecks size={14} /> {quiz.questions} questions</span><span><Clock3 size={14} /> {quiz.durationMinutes} min</span>{!locked && !reporter && quiz.attemptsRemaining !== undefined && <span><CheckCheck size={14} /> {quiz.attemptsRemaining} attempt{quiz.attemptsRemaining === 1 ? '' : 's'} left</span>}</div></div>{complete && <div className="card-score"><strong>{quiz.score !== undefined ? `${quiz.score}%` : quiz.earnedPoints !== undefined && quiz.possiblePoints !== undefined ? `${quiz.earnedPoints} / ${quiz.possiblePoints}` : '--'}</strong><span>{quiz.score !== undefined ? `${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts` : 'score'}</span></div>}<button className={`icon-button card-arrow ${locked ? 'is-locked' : ''}`} onClick={() => onOpen(quiz)} aria-label={locked ? 'Quiz not assigned' : `Open ${quiz.title}`}>{locked ? <LockKeyhole size={17} /> : <ArrowUpRight size={18} />}</button></article>
 }
 
-function StudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace, notify }: { student: Student; schoolId: string; quiz: Quiz; onExit: () => void; onRefreshWorkspace: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
+function StudentQuiz({ student, schoolId, quiz, onExit: exitQuiz, onRefreshWorkspace, notify }: { student: Student; schoolId: string; quiz: Quiz; onExit: () => void; onRefreshWorkspace: () => Promise<void>; notify: (toast: ToastMessage) => void }) {
   const questions = quiz.questionsList ?? []
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isReview, setIsReview] = useState(false)
@@ -1167,7 +1257,17 @@ function StudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace, noti
     return () => window.clearInterval(timer)
   }, [expiresAt, isSubmitted])
 
-  const finishQuiz = async () => {
+  useEffect(() => {
+    if (!attemptId || isSubmitted) return
+    const warnBeforeExit = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = 'Your current answers will be submitted only if you choose Exit quiz inside LateQuiz.'
+    }
+    window.addEventListener('beforeunload', warnBeforeExit)
+    return () => window.removeEventListener('beforeunload', warnBeforeExit)
+  }, [attemptId, isSubmitted])
+
+  const finishQuiz = async (submissionReason: 'manual' | 'exit' | 'timeout' = 'manual') => {
     if (isSubmitting) return
     if (!attemptId) return notify({ tone: 'warning', title: 'Attempt is not ready', message: 'Wait for the quiz attempt to connect before submitting.' })
     setIsSubmitting(true)
@@ -1177,7 +1277,7 @@ function StudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace, noti
       setIsSubmitting(false)
       return
     }
-    const submitResult = await submitAttempt(attemptId)
+    const submitResult = await submitAttempt(attemptId, submissionReason)
     if (submitResult.error) {
       notify({ tone: 'warning', title: 'Could not submit quiz', message: submitResult.error.message })
       setIsSubmitting(false)
@@ -1189,20 +1289,39 @@ function StudentQuiz({ student, schoolId, quiz, onExit, onRefreshWorkspace, noti
     void onRefreshWorkspace()
   }
 
+  const requestExit = () => {
+    if (isSubmitting || isSubmitted) return
+    if (!attemptId) return exitQuiz()
+    if (window.confirm('If you exit the quiz, your answered work will be submitted and the timer will stop. You will not be able to attempt this quiz again unless an administrator changes the assignment.')) void finishQuiz('exit')
+  }
+
+  const onExit = () => {
+    if (quiz.status === 'ready' && attemptId && !isSubmitted) return requestExit()
+    exitQuiz()
+  }
+
   useEffect(() => {
     if (secondsLeft === 0 && !isSubmitted && attemptId) {
-      void finishQuiz()
+      void finishQuiz('timeout')
       notify({ tone: 'warning', title: 'Time is up', message: 'Your saved answers were submitted automatically.' })
     }
   }, [secondsLeft, isSubmitted, attemptId])
 
-  if (quiz.status === 'completed' || quiz.status === 'in-review') return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to quizzes</button><div className="result-card"><div className="result-burst"><CheckCircle2 size={30} /></div><span className="eyebrow eyebrow-accent">{quiz.status === 'completed' ? 'Completed quiz' : 'Awaiting review'}</span><h2>{quiz.status === 'completed' ? `You scored ${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts.` : 'Your answers are under review.'}</h2><p>This quiz is read-only because the attempt has already been submitted.</p><button className="button button-primary" onClick={onExit}>Return to quizzes <ArrowRight size={16} /></button></div></section>
+  if (isSubmitting) return <section className="quiz-submit-screen"><div className="submit-loader"><LoaderCircle className="spin" size={32} /></div><span className="eyebrow eyebrow-accent">Saving your attempt</span><h2>Submitting your quiz...</h2><p>Your answers are being recorded. Please keep this window open.</p></section>
+  if (quiz.status === 'reported') return <ReporterQuizView quiz={quiz} onExit={onExit} />
+  if (quiz.status === 'completed' || quiz.status === 'in-review') return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to quizzes</button><div className="result-card"><div className="result-burst"><CheckCircle2 size={30} /></div><span className="eyebrow eyebrow-accent">{quiz.status === 'completed' ? 'Completed quiz' : 'Awaiting review'}</span><h2>{quiz.status === 'completed' ? `You scored ${quiz.earnedPoints ?? 0} / ${quiz.possiblePoints ?? quiz.points} pts.` : 'Your answers are under review.'}</h2><p>This quiz is read-only because the attempt has already been submitted.</p><div className="result-summary"><div><span>Score</span><strong>{quiz.earnedPoints ?? 0} / {quiz.possiblePoints ?? quiz.points} pts</strong></div><div><span>Time taken</span><strong>{formatDuration(quiz.timeTakenSeconds)}</strong></div><div><span>Status</span><strong>{quiz.status === 'completed' ? 'Graded' : 'Needs review'}</strong></div></div><button className="button button-primary" onClick={onExit}>Return to quizzes <ArrowRight size={16} /></button></div></section>
   if (!currentQuestion) return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to quizzes</button><div className="result-card"><div className="result-burst"><BookOpen size={28} /></div><h2>This quiz has no questions yet.</h2><p>Ask your administrator to finish the quiz before starting it.</p></div></section>
-  if (isSubmitted) return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to quizzes</button><div className="result-card"><div className="result-burst"><CheckCircle2 size={30} /></div><span className="eyebrow eyebrow-accent">Submission received</span><h2>Nice work, {displayName(student).split(' ')[0]}.</h2><p>Your answers are saved. Written and uploaded items remain available for administrator review.</p><div className="result-summary"><div><span>Auto-graded score</span><strong>{submissionResult ? `${submissionResult.earned_points} / ${submissionResult.possible_points} pts` : '--'}</strong></div><div><span>Manual review</span><strong>{submissionResult?.manual_items ? `${submissionResult.manual_items} pending` : 'None pending'}</strong></div><div><span>Submitted</span><strong>{submissionResult?.expired ? 'Time expired' : 'Just now'}</strong></div></div><button className="button button-primary" onClick={onExit}>Return to quizzes <ArrowRight size={16} /></button></div></section>
+  if (isSubmitted) return <section className="quiz-result-page"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to quizzes</button><div className="result-card"><div className="result-burst"><CheckCircle2 size={30} /></div><span className="eyebrow eyebrow-accent">Submission received</span><h2>Nice work, {displayName(student).split(' ')[0]}.</h2><p>Your answers are saved. Written and uploaded items remain available for administrator review.</p><div className="result-summary"><div><span>Auto-graded score</span><strong>{submissionResult ? `${submissionResult.earned_points} / ${submissionResult.possible_points} pts` : '--'}</strong></div><div><span>Manual review</span><strong>{submissionResult?.manual_items ? `${submissionResult.manual_items} pending` : 'None pending'}</strong></div><div><span>Time taken</span><strong>{formatDuration(submissionResult?.time_taken_seconds)}</strong></div><div><span>Submitted</span><strong>{submissionResult?.expired ? 'Time expired' : 'Just now'}</strong></div></div><button className="button button-primary" onClick={onExit}>Return to quizzes <ArrowRight size={16} /></button></div></section>
 
   const formatTime = `${Math.floor(secondsLeft / 60).toString().padStart(2, '0')}:${(secondsLeft % 60).toString().padStart(2, '0')}`
   const setAnswer = (value: string) => setAnswers((current) => ({ ...current, [currentQuestion.id]: value }))
   return <div className="quiz-runner"><div className="quiz-runner-top"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Exit quiz</button><div className={`timer-pill ${secondsLeft < 300 ? 'timer-warning' : ''}`}><Clock3 size={16} /><span>{formatTime}</span><small>remaining</small></div></div><div className="quiz-runner-layout"><aside className="question-sidebar"><div className="question-sidebar-heading"><div><span className="eyebrow">Question map</span><strong>{answeredCount} of {questions.length} answered</strong></div><span className="question-percent">{progress}%</span></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="question-grid">{questions.map((question, index) => <button key={question.id} className={`${index === currentIndex ? 'current ' : ''}${answers[question.id] ? 'answered' : ''}`} onClick={() => { setCurrentIndex(index); setIsReview(false) }}>{index + 1}{answers[question.id] && <Check size={11} />}</button>)}</div></aside><section className="question-panel">{isReview ? <QuizReview answers={answers} questions={questions} onJump={(index) => { setCurrentIndex(index); setIsReview(false) }} onBack={() => setIsReview(false)} onSubmit={() => void finishQuiz()} /> : <><div className="question-panel-heading"><div><span className="question-number">Question {currentIndex + 1} <span>of {questions.length}</span></span><StatusBadge tone={currentQuestion.requiresReview ? 'purple' : 'blue'}>{currentQuestion.type === 'multiple-choice' ? 'Multiple choice' : currentQuestion.type === 'identification' ? 'Identification' : currentQuestion.type === 'essay' ? 'Essay' : 'File upload'}</StatusBadge></div><span className="question-points">{currentQuestion.points} pts</span></div><div className="question-copy"><h2>{currentQuestion.prompt}</h2><p>Answer carefully. Your progress saves automatically.</p></div><QuestionInput question={currentQuestion} value={answers[currentQuestion.id] ?? ''} onChange={setAnswer} /><div className="question-footer"><span className="muted-label">{answeredCount} of {questions.length} answered</span><div className="question-nav-buttons"><button className="button button-secondary previous-button" disabled={currentIndex === 0} onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}><ArrowLeft size={15} /> Previous</button>{currentIndex < questions.length - 1 ? <button className="button button-primary" onClick={() => setCurrentIndex((index) => Math.min(questions.length - 1, index + 1))}>Next <ArrowRight size={15} /></button> : <button className="button button-primary" onClick={() => setIsReview(true)}>Review answers <ClipboardCheck size={15} /></button>}</div></div></>}</section></div></div>
+}
+
+function ReporterQuizView({ quiz, onExit }: { quiz: Quiz; onExit: () => void }) {
+  const reporters = quiz.reporters ?? []
+  const questions = quiz.questionsList ?? []
+  return <section className="reporter-quiz-page"><div className="reporter-quiz-header"><button className="back-link" onClick={onExit}><ArrowLeft size={16} /> Back to quizzes</button><span className="status-badge status-purple">Reporter access</span></div><div className="reporter-quiz-intro"><div><span className="eyebrow eyebrow-accent">Read-only workspace</span><h2>{quiz.title}</h2><p>{quiz.description || 'Review this published quiz without answering or editing it.'}</p></div><div className="reporter-quiz-meta"><span><ListChecks size={15} /> {quiz.questions} questions</span><span><Clock3 size={15} /> {quiz.durationMinutes} min</span></div></div><section className="reporter-panel"><div className="reporter-panel-heading"><div><span className="eyebrow">Assigned reporters</span><h3>{reporters.length ? 'People reviewing this quiz' : 'Reporter access'}</h3></div><span className="muted-label">View only</span></div>{reporters.length ? <div className="reporter-list">{reporters.map((reporter) => <div className="reporter-person" key={reporter.schoolId}><StudentAvatar student={reporter} className="avatar avatar-small avatar-mint" /><div><strong>{displayName(reporter)}</strong><span>{reporter.schoolId}</span></div></div>)}</div> : <p className="muted-label">You can view the questions, but only assigned students can submit answers.</p>}</section><section className="reporter-question-list">{questions.map((question, index) => <article className="reporter-question-card" key={question.id}><div className="reporter-question-number">{String(index + 1).padStart(2, '0')}</div><div><span className="eyebrow">{question.type} · {question.points} pts</span><h3>{question.prompt}</h3>{question.type === 'multiple-choice' && <ol className="reporter-options">{(question.options ?? []).map((option, optionIndex) => <li key={`${question.id}-${optionIndex}`}>{option}</li>)}</ol>}</div></article>)}{!questions.length && <div className="empty-state"><BookOpen size={24} /><strong>No questions available</strong><span>Ask the administrator to finish this quiz.</span></div>}</section></section>
 }
 
 function QuizReview({ answers, questions, onJump, onBack, onSubmit }: { answers: Record<string, string>; questions: Question[]; onJump: (index: number) => void; onBack: () => void; onSubmit: () => void }) {
@@ -1307,18 +1426,21 @@ function AssignQuizModal({ quiz, onClose, onSaved, notify }: { quiz: Quiz; onClo
   const [isSaving, setIsSaving] = useState(false)
   const [isLoaded, setIsLoaded] = useState(false)
   const [confirmUnassign, setConfirmUnassign] = useState(false)
+  const [reporterIds, setReporterIds] = useState<string[]>([])
   useEffect(() => {
-    Promise.all([loadAdminRoster(), loadQuizAssignments(quiz.id)]).then(([roster, assignmentResult]) => {
+    Promise.all([loadAdminRoster(), loadQuizAssignments(quiz.id), loadQuizCollaborators(quiz.id)]).then(([roster, assignmentResult, reporterResult]) => {
       if (assignmentResult.error) throw assignmentResult.error
+      if (reporterResult.error) throw reporterResult.error
       const activeIds = assignmentResult.data.map((assignment) => assignment.school_id)
+      setReporterIds(reporterResult.data)
       setStudents(roster)
-      setSelected(activeIds)
-      setInitialSelected(activeIds)
+      setSelected(activeIds.filter((schoolId) => !reporterResult.data.includes(schoolId)))
+      setInitialSelected(activeIds.filter((schoolId) => !reporterResult.data.includes(schoolId)))
       if (assignmentResult.data[0]?.attempt_limit) setAttemptLimit(Number(assignmentResult.data[0].attempt_limit))
       setIsLoaded(true)
     }).catch((error: Error) => notify({ tone: 'warning', title: 'Assignment data could not load', message: error.message }))
   }, [quiz.id, notify])
-  const visible = sortStudents(students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase()) && student.active !== false))
+  const visible = sortStudents(students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase()) && student.active !== false && !reporterIds.includes(student.schoolId)))
   const allSelected = visible.length > 0 && visible.every((student) => selected.includes(student.schoolId))
   const toggleAll = () => setSelected(allSelected ? selected.filter((id) => !visible.some((student) => student.schoolId === id)) : [...new Set([...selected, ...visible.map((student) => student.schoolId)])])
   const save = async () => {

@@ -29,7 +29,7 @@ Deno.serve(async (request) => {
   const { data: userData } = await userClient.auth.getUser()
   if (!userData.user) return response({ error: 'Invalid session' }, 401)
 
-  let body: { attempt_id?: string }
+  let body: { attempt_id?: string; submission_reason?: 'manual' | 'exit' | 'timeout' }
   try {
     body = await request.json()
   } catch {
@@ -40,7 +40,7 @@ Deno.serve(async (request) => {
   const serviceClient = createClient(supabaseUrl, serviceRoleKey)
   const { data: attempt, error: attemptError } = await serviceClient
     .from('LQ_attempts')
-    .select('id, assignment_id, quiz_id, school_id, auth_user_id, expires_at, status')
+    .select('id, assignment_id, quiz_id, school_id, auth_user_id, started_at, expires_at, status')
     .eq('id', body.attempt_id)
     .maybeSingle()
   if (attemptError || !attempt) return response({ error: 'Attempt not found' }, 404)
@@ -49,7 +49,7 @@ Deno.serve(async (request) => {
 
   const [{ data: assignment, error: assignmentError }, { data: quiz, error: quizError }] = await Promise.all([
     serviceClient.from('LQ_quiz_assignments').select('id, is_active, quiz_id, school_id').eq('id', attempt.assignment_id).maybeSingle(),
-    serviceClient.from('LQ_quizzes').select('id, status').eq('id', attempt.quiz_id).maybeSingle(),
+    serviceClient.from('LQ_quizzes').select('id, status, duration_seconds').eq('id', attempt.quiz_id).maybeSingle(),
   ])
   if (assignmentError || quizError) return response({ error: 'Could not validate the quiz assignment' }, 500)
   if (!assignment || assignment.is_active !== true || assignment.quiz_id !== attempt.quiz_id || assignment.school_id !== attempt.school_id || !quiz || quiz.status !== 'published') {
@@ -58,17 +58,24 @@ Deno.serve(async (request) => {
 
   const expired = new Date(attempt.expires_at).getTime() <= Date.now()
   const [{ data: questions, error: questionsError }, { data: answers, error: answersError }, { data: parts, error: partsError }] = await Promise.all([
-    serviceClient.from('LQ_questions').select('id, part_id, question_type, points, answer_key, requires_manual_review').eq('quiz_id', attempt.quiz_id),
+    serviceClient.from('LQ_questions').select('id, part_id, question_type, points, requires_manual_review').eq('quiz_id', attempt.quiz_id),
     serviceClient.from('LQ_answers').select('id, question_id, answer_text, file_path').eq('attempt_id', attempt.id),
     serviceClient.from('LQ_quiz_parts').select('id, title, position').eq('quiz_id', attempt.quiz_id).order('position'),
   ])
   if (questionsError || answersError || partsError) return response({ error: 'Could not load answers for grading' }, 500)
+
+  const questionIds = (questions ?? []).map((question) => question.id)
+  const { data: keyRows, error: keyError } = questionIds.length
+    ? await serviceClient.from('LQ_question_keys').select('question_id, answer_key').in('question_id', questionIds)
+    : { data: [], error: null }
+  if (keyError) return response({ error: 'Could not load answer keys for grading' }, 500)
 
   let awarded = 0
   let total = 0
   let manualReview = false
   let manualItems = 0
   const answerByQuestion = new Map((answers ?? []).map((answer) => [answer.question_id, answer]))
+  const keyByQuestion = new Map((keyRows ?? []).map((key) => [key.question_id, key.answer_key]))
   const partById = new Map((parts ?? []).map((part) => [part.id, part]))
   const partStats = new Map<string, { partId: string | null; title: string; position: number; possible: number; awarded: number; pending: boolean }>()
 
@@ -103,7 +110,7 @@ Deno.serve(async (request) => {
       continue
     }
 
-    const correct = hasResponse && normalize(answer?.answer_text) === normalize(question.answer_key)
+    const correct = hasResponse && normalize(answer?.answer_text) === normalize(keyByQuestion.get(question.id))
     if (correct) {
       awarded += points
       stats.awarded += points
@@ -131,16 +138,31 @@ Deno.serve(async (request) => {
       .upsert(partScores, { onConflict: 'attempt_id,position' })
     if (partScoreError) return response({ error: partScoreError.message }, 500)
   }
+  const submittedAt = new Date()
+  const elapsedSeconds = Math.max(0, Math.round((submittedAt.getTime() - new Date(attempt.started_at).getTime()) / 1000))
+  const timeTakenSeconds = Math.min(elapsedSeconds, Number(quiz.duration_seconds ?? elapsedSeconds))
+  const submissionReason = expired ? 'timeout' : body.submission_reason ?? 'manual'
   const { error: updateError } = await serviceClient
     .from('LQ_attempts')
     .update({
       status: expired ? 'expired' : 'submitted',
-      submitted_at: new Date().toISOString(),
+      submitted_at: submittedAt.toISOString(),
+      time_taken_seconds: timeTakenSeconds,
+      submission_reason: submissionReason,
       auto_score: autoScore,
       final_score: manualReview ? null : autoScore,
     })
     .eq('id', attempt.id)
+    .eq('status', 'in_progress')
   if (updateError) return response({ error: updateError.message }, 500)
+
+  await serviceClient.from('LQ_notifications').insert({
+    recipient_role: 'admin',
+    type: 'submission_received',
+    title: expired ? 'Quiz submitted automatically' : 'New quiz submission',
+    message: `A student submitted an attempt for quiz ${attempt.quiz_id}.`,
+    metadata: { attempt_id: attempt.id, quiz_id: attempt.quiz_id, school_id: attempt.school_id, submission_reason: submissionReason },
+  })
 
   return response({
     auto_score: autoScore,
@@ -149,6 +171,7 @@ Deno.serve(async (request) => {
     manual_review: manualReview,
     manual_items: manualItems,
     expired,
+    time_taken_seconds: timeTakenSeconds,
     part_scores: partScores.map((part) => ({
       part_id: part.part_id,
       title: part.part_title,

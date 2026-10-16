@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="LateQuiz">
+  <defs>
+    <linearGradient id="latequiz-blue" x1="18" y1="16" x2="105" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1598e8" />
+      <stop offset="1" stop-color="#183f9b" />
+    </linearGradient>
+    <linearGradient id="latequiz-purple" x1="56" y1="28" x2="113" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7a39ed" />
+      <stop offset="1" stop-color="#4f28cf" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="#fff" />
+  <path d="M24 24v53c0 15 12 27 27 27h42" fill="none" stroke="url(#latequiz-blue)" stroke-linecap="round" stroke-width="14" />
+  <path d="M61 40a31 31 0 1 1 0 62 31 31 0 0 1 0-62Z" fill="#fff" stroke="url(#latequiz-purple)" stroke-width="10" />
+  <path d="m48 70 9 9 20-22" fill="none" stroke="#5f2bd9" stroke-linecap="round" stroke-linejoin="round" stroke-width="9" />
+  <path d="m88 21 20 13-13 5-5 19-20-13 13-5Z" fill="#18366f" />
+</svg>

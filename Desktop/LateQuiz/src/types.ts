@@ -15,7 +15,7 @@ export type AdminView =
   | 'students'
 
 export type QuestionType = 'multiple-choice' | 'identification' | 'essay' | 'upload'
-export type QuizStatus = 'ready' | 'locked' | 'completed' | 'in-review' | 'draft' | 'archived'
+export type QuizStatus = 'ready' | 'locked' | 'completed' | 'in-review' | 'reported' | 'draft' | 'archived'
 
 export interface Student {
   schoolId: string
@@ -33,6 +33,14 @@ export interface Subject {
   id: string
   name: string
   isActive?: boolean
+}
+
+export interface QuizReporter {
+  schoolId: string
+  firstNames: string
+  lastName: string
+  avatar?: string
+  avatarPath?: string
 }
 
 export interface Notification {
@@ -95,7 +103,14 @@ export interface Quiz {
   assignedCount?: number
   answeredCount?: number
   attemptLimit?: number
+  attemptsRemaining?: number
   expiresAt?: string
+  startedAt?: string
+  submittedAt?: string
+  timeTakenSeconds?: number
+  isReporter?: boolean
+  canAnswer?: boolean
+  reporters?: QuizReporter[]
 }
 
 export interface ScoreRecord {
@@ -110,6 +125,7 @@ export interface ScoreRecord {
   parts?: PartScore[]
   status: 'passed' | 'reviewing' | 'needs-retake'
   reviewed?: boolean
+  timeTakenSeconds?: number
 }
 
 export type SubmissionStatus = 'needs-review' | 'graded' | 'in-progress'
@@ -151,10 +167,20 @@ export interface Submission {
   totalItems: number
   earnedPoints: number
   possiblePoints: number
+  timeTakenSeconds: number | null
+  submissionReason?: 'manual' | 'exit' | 'timeout' | 'admin'
   answers: SubmissionAnswer[]
   partColumns: SubmissionPartColumn[]
   parts?: PartScore[]
 }
+
+export interface SubmissionAssignment {
+  quizId: string
+  schoolId: string
+  attemptLimit: number
+}
+
+export type SubmissionDashboardCategory = 'assigned' | 'started' | 'answered' | 'not-answered' | 'needs-review'
 
 export interface ToastMessage {
   title: string

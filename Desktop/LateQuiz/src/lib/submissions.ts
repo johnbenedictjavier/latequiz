@@ -13,6 +13,8 @@ type AttemptRow = {
   final_score: number | null
   started_at: string
   submitted_at: string | null
+  time_taken_seconds: number | null
+  submission_reason: 'manual' | 'exit' | 'timeout' | 'admin'
 }
 
 type QuizRow = {
@@ -29,7 +31,6 @@ type QuestionRow = {
   question_type: QuestionType
   prompt: string
   points: number
-  answer_key: string | null
   requires_manual_review: boolean
 }
 
@@ -87,14 +88,14 @@ function mapPartScore(row: PartRow): PartScore {
   }
 }
 
-function mapAnswer(question: QuestionRow, answer?: AnswerRow): SubmissionAnswer {
+function mapAnswer(question: QuestionRow, answer?: AnswerRow, answerKey?: string | null): SubmissionAnswer {
   return {
     id: answer?.id,
     questionId: question.id,
     prompt: question.prompt,
     type: question.question_type,
     answer: answer?.answer_text || answer?.file_path || '',
-    correctAnswer: question.answer_key ?? '',
+    correctAnswer: answerKey ?? '',
     points: Number(question.points),
     pointsAwarded: Number(answer?.points_awarded ?? 0),
     isCorrect: answer?.is_correct ?? null,
@@ -112,7 +113,7 @@ export async function loadAdminSubmissions() {
   ] = await Promise.all([
     supabase
       .from('LQ_attempts')
-      .select('id, quiz_id, school_id, attempt_number, status, auto_score, manual_score, final_score, started_at, submitted_at')
+      .select('id, quiz_id, school_id, attempt_number, status, auto_score, manual_score, final_score, started_at, submitted_at, time_taken_seconds, submission_reason')
       .neq('status', 'cancelled')
       .order('started_at', { ascending: false }),
     supabase.from('LQ_student_roster').select('school_id, last_name, first_names, is_active'),
@@ -129,12 +130,12 @@ export async function loadAdminSubmissions() {
   const quizIds = [...new Set(attempts.map((attempt) => attempt.quiz_id))]
   const attemptIds = attempts.map((attempt) => attempt.id)
   const [
-    { data: questionRows, error: questionError },
-    { data: answerRows, error: answerError },
-    { data: partRows, error: partError },
-    { data: quizPartRows, error: quizPartError },
+     { data: questionRows, error: questionError },
+     { data: answerRows, error: answerError },
+     { data: partRows, error: partError },
+     { data: quizPartRows, error: quizPartError },
   ] = await Promise.all([
-    supabase.from('LQ_questions').select('id, quiz_id, position, part_id, question_type, prompt, points, answer_key, requires_manual_review').in('quiz_id', quizIds),
+    supabase.from('LQ_questions').select('id, quiz_id, position, part_id, question_type, prompt, points, requires_manual_review').in('quiz_id', quizIds),
     supabase.from('LQ_answers').select('id, attempt_id, question_id, answer_text, file_path, is_correct, points_awarded').in('attempt_id', attemptIds),
     supabase.from('LQ_attempt_part_scores').select('attempt_id, part_id, part_title, position, points_possible, auto_points, final_points').in('attempt_id', attemptIds).order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, title, position').in('quiz_id', quizIds).order('position'),
@@ -144,6 +145,14 @@ export async function loadAdminSubmissions() {
   if (answerError) throw answerError
   if (partError) throw partError
   if (quizPartError) throw quizPartError
+
+  const questionIds = (questionRows ?? []).map((question) => question.id)
+  const { data: keyRows, error: keyError } = questionIds.length
+    ? await supabase.from('LQ_question_keys').select('question_id, answer_key').in('question_id', questionIds)
+    : { data: [], error: null }
+  if (keyError) throw keyError
+
+  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_key: string | null }>).map((row) => [row.question_id, row.answer_key]))
 
   const questionsByQuiz = new Map<string, QuestionRow[]>()
   for (const question of (questionRows ?? []) as QuestionRow[]) {
@@ -190,7 +199,7 @@ export async function loadAdminSubmissions() {
     const roster = rosters.get(attempt.school_id)
     const questions = questionsByQuiz.get(attempt.quiz_id) ?? []
     const answers = answersByAttempt.get(attempt.id) ?? new Map<string, AnswerRow>()
-    const mappedAnswers = questions.map((question) => mapAnswer(question, answers.get(question.id)))
+    const mappedAnswers = questions.map((question) => mapAnswer(question, answers.get(question.id), answerKeys.get(question.id)))
     const parts = partsByAttempt.get(attempt.id) ?? []
     const partColumns = [...(partColumnsByQuiz.get(attempt.quiz_id) ?? [])]
     const questionPartIds = new Set(questions.map((question) => question.part_id ?? '__general'))
@@ -231,6 +240,8 @@ export async function loadAdminSubmissions() {
       totalItems: mappedAnswers.length,
       earnedPoints,
       possiblePoints,
+      timeTakenSeconds: attempt.time_taken_seconds === null || attempt.time_taken_seconds === undefined ? null : Number(attempt.time_taken_seconds),
+      submissionReason: attempt.submission_reason,
       answers: mappedAnswers,
       partColumns,
       parts,
