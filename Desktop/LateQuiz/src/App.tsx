@@ -232,7 +232,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (role !== 'student' || !student || !isSupabaseConfigured) return
+    if (role !== 'student' || !student || !isSupabaseConfigured || mustChangePassword) return
     let active = true
     loadStudentWorkspace(student.schoolId).then((workspace) => {
       if (!active) return
@@ -247,7 +247,7 @@ export default function App() {
       }
     })
     return () => { active = false }
-  }, [role, student?.schoolId, notify])
+  }, [role, student?.schoolId, mustChangePassword, notify])
 
   useEffect(() => {
     if (role !== 'admin' || !isSupabaseConfigured) return
