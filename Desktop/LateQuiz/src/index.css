@@ -1229,7 +1229,9 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .reporter-question-card { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 13px; padding: 18px; border: 1px solid #e5e7ee; border-radius: 12px; background: #fff; }
 .reporter-question-number { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; color: #6f66cc; background: #f0eeff; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 10px; font-weight: 700; }
 .reporter-question-card h3 { margin-top: 7px; color: var(--ink); font-size: 14px; line-height: 1.5; }
-.reporter-options { display: flex; flex-direction: column; gap: 6px; margin: 13px 0 0; padding-left: 18px; color: #7d879d; font-size: 10px; line-height: 1.5; }
+.reporter-options { display: flex; flex-direction: column; gap: 6px; margin: 13px 0 0; padding-left: 0; color: #7d879d; font-size: 10px; line-height: 1.5; list-style: none; counter-reset: reporter-option; }
+.reporter-options li { display: flex; gap: 7px; counter-increment: reporter-option; }
+.reporter-options li::before { flex: 0 0 16px; color: #6e65cc; content: counter(reporter-option, upper-alpha) '.'; font-weight: 700; }
 .reporter-picker { padding: 19px; }
 .reporter-picker .questions-builder-heading { margin-bottom: 7px; }
 .builder-help-text { margin: 0 0 14px; color: #8891a5; font-size: 10px; line-height: 1.5; }
@@ -1352,4 +1354,45 @@ h1, h2, h3 { letter-spacing: -0.035em; }
   .builder-actions .button:nth-of-type(3):disabled,
   .builder-actions .button:nth-of-type(2):disabled::after,
   .builder-actions .button:nth-of-type(3):disabled::after { animation: none; }
+}
+
+.admin-overview-page { display: flex; flex-direction: column; gap: 20px; }
+.recent-submission-card { padding: 21px; border: 1px solid var(--line); border-radius: 14px; background: #fff; box-shadow: var(--shadow-sm); }
+.recent-submission-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+.recent-submission-heading h3 { margin-top: 6px; color: var(--ink); font-size: 17px; }
+.recent-submission-row { display: flex; align-items: center; gap: 11px; margin-top: 16px; padding: 13px; border: 1px solid #e8eaf0; border-radius: 11px; background: #fbfcfe; }
+.recent-submission-copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.recent-submission-copy strong { overflow-wrap: anywhere; color: #59627c; font-size: 11px; }
+.recent-submission-copy span { overflow-wrap: anywhere; color: #727c94; font-size: 10px; }
+.recent-submission-copy small { color: #9da5b5; font-size: 9px; }
+.recent-submission-score { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.recent-submission-score strong { color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; font-size: 15px; }
+.recent-submission-score span { color: #9da5b5; font-size: 9px; }
+.recent-submission-loading,
+.recent-submission-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 92px; margin-top: 14px; color: #929aac; font-size: 10px; text-align: center; }
+.recent-submission-empty { flex-direction: column; }
+.recent-submission-empty svg { color: #aaa4ed; }
+
+@media (max-width: 650px) {
+  .quiz-runner,
+  .quiz-runner-layout,
+  .question-panel,
+  .question-copy,
+  .answer-options,
+  .answer-option,
+  .text-answer,
+  .upload-answer,
+  .review-panel,
+  .review-question-list,
+  .review-question-card { width: 100%; max-width: none; min-width: 0; box-sizing: border-box; }
+  .quiz-runner-layout { align-items: stretch; }
+  .answer-option { align-self: stretch; overflow-wrap: anywhere; }
+  .answer-option > span:not(.option-key):not(.option-check) { min-width: 0; overflow-wrap: anywhere; }
+  .upload-dropzone { width: 100%; box-sizing: border-box; }
+  .recent-submission-card { padding: 17px; }
+  .recent-submission-heading { align-items: flex-start; flex-direction: column; }
+  .recent-submission-heading .text-button { align-self: flex-start; }
+  .recent-submission-row { align-items: flex-start; flex-wrap: wrap; }
+  .recent-submission-copy { flex-basis: calc(100% - 50px); }
+  .recent-submission-score { width: 100%; align-items: flex-start; padding-left: 49px; }
 }

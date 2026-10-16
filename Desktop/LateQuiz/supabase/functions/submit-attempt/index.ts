@@ -47,11 +47,12 @@ Deno.serve(async (request) => {
   if (attempt.auth_user_id !== userData.user.id) return response({ error: 'This attempt does not belong to you' }, 403)
   if (attempt.status !== 'in_progress') return response({ error: 'Attempt has already been submitted' }, 409)
 
-  const [{ data: assignment, error: assignmentError }, { data: quiz, error: quizError }] = await Promise.all([
+  const [{ data: assignment, error: assignmentError }, { data: quiz, error: quizError }, { data: student, error: studentError }] = await Promise.all([
     serviceClient.from('LQ_quiz_assignments').select('id, is_active, quiz_id, school_id').eq('id', attempt.assignment_id).maybeSingle(),
-    serviceClient.from('LQ_quizzes').select('id, status, duration_seconds').eq('id', attempt.quiz_id).maybeSingle(),
+    serviceClient.from('LQ_quizzes').select('id, title, status, duration_seconds').eq('id', attempt.quiz_id).maybeSingle(),
+    serviceClient.from('LQ_student_roster').select('first_names, last_name').eq('school_id', attempt.school_id).maybeSingle(),
   ])
-  if (assignmentError || quizError) return response({ error: 'Could not validate the quiz assignment' }, 500)
+  if (assignmentError || quizError || studentError) return response({ error: 'Could not validate the quiz assignment' }, 500)
   if (!assignment || assignment.is_active !== true || assignment.quiz_id !== attempt.quiz_id || assignment.school_id !== attempt.school_id || !quiz || quiz.status !== 'published') {
     return response({ error: 'This quiz assignment is no longer active' }, 409)
   }
@@ -156,12 +157,14 @@ Deno.serve(async (request) => {
     .eq('status', 'in_progress')
   if (updateError) return response({ error: updateError.message }, 500)
 
+  const studentName = [student?.first_names, student?.last_name].filter(Boolean).join(' ') || attempt.school_id
+  const quizTitle = quiz.title || attempt.quiz_id
   await serviceClient.from('LQ_notifications').insert({
     recipient_role: 'admin',
     type: 'submission_received',
     title: expired ? 'Quiz submitted automatically' : 'New quiz submission',
-    message: `A student submitted an attempt for quiz ${attempt.quiz_id}.`,
-    metadata: { attempt_id: attempt.id, quiz_id: attempt.quiz_id, school_id: attempt.school_id, submission_reason: submissionReason },
+    message: expired ? `${studentName}'s attempt for ${quizTitle} reached its time limit.` : `${studentName} submitted an attempt for ${quizTitle}.`,
+    metadata: { attempt_id: attempt.id, quiz_id: attempt.quiz_id, school_id: attempt.school_id, student_name: studentName, quiz_title: quizTitle, submission_reason: submissionReason },
   })
 
   return response({

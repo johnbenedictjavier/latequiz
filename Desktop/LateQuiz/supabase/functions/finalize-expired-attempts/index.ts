@@ -23,12 +23,14 @@ async function finalizeAttempt(serviceClient: ReturnType<typeof createClient>, a
   started_at: string
   expires_at: string
 }) {
-  const [{ data: questions, error: questionsError }, { data: answers, error: answersError }, { data: parts, error: partsError }] = await Promise.all([
+  const [{ data: questions, error: questionsError }, { data: answers, error: answersError }, { data: parts, error: partsError }, { data: quiz, error: quizError }, { data: student, error: studentError }] = await Promise.all([
     serviceClient.from('LQ_questions').select('id, part_id, question_type, points, requires_manual_review').eq('quiz_id', attempt.quiz_id),
     serviceClient.from('LQ_answers').select('id, question_id, answer_text, file_path').eq('attempt_id', attempt.id),
     serviceClient.from('LQ_quiz_parts').select('id, title, position').eq('quiz_id', attempt.quiz_id).order('position'),
+    serviceClient.from('LQ_quizzes').select('id, title').eq('id', attempt.quiz_id).maybeSingle(),
+    serviceClient.from('LQ_student_roster').select('first_names, last_name').eq('school_id', attempt.school_id).maybeSingle(),
   ])
-  if (questionsError || answersError || partsError) throw questionsError ?? answersError ?? partsError
+  if (questionsError || answersError || partsError || quizError || studentError) throw questionsError ?? answersError ?? partsError ?? quizError ?? studentError
 
   const questionIds = (questions ?? []).map((question) => question.id)
   const { data: keyRows, error: keyError } = questionIds.length
@@ -109,12 +111,14 @@ async function finalizeAttempt(serviceClient: ReturnType<typeof createClient>, a
     .eq('status', 'in_progress')
   if (updateError) throw updateError
 
+  const studentName = [student?.first_names, student?.last_name].filter(Boolean).join(' ') || attempt.school_id
+  const quizTitle = quiz?.title ?? attempt.quiz_id
   await serviceClient.from('LQ_notifications').insert({
     recipient_role: 'admin',
     type: 'submission_received',
     title: 'Quiz submitted automatically',
-    message: `An attempt for quiz ${attempt.quiz_id} reached its time limit.`,
-    metadata: { attempt_id: attempt.id, quiz_id: attempt.quiz_id, school_id: attempt.school_id, submission_reason: 'timeout' },
+    message: `${studentName}'s attempt for ${quizTitle} reached its time limit.`,
+    metadata: { attempt_id: attempt.id, quiz_id: attempt.quiz_id, school_id: attempt.school_id, student_name: studentName, quiz_title: quizTitle, submission_reason: 'timeout' },
   })
 }
 
