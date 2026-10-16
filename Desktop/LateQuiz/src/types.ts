@@ -3,6 +3,7 @@ export type Role = 'student' | 'admin'
 export type StudentView =
   | 'dashboard'
   | 'quizzes'
+  | 'reporters'
   | 'quiz'
   | 'scores'
   | 'account'
@@ -108,6 +109,7 @@ export interface Quiz {
   startedAt?: string
   submittedAt?: string
   timeTakenSeconds?: number
+  isAssigned?: boolean
   isReporter?: boolean
   canAnswer?: boolean
   reporters?: QuizReporter[]

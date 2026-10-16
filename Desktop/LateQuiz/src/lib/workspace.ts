@@ -62,6 +62,17 @@ type ReporterRow = {
   avatar_url: string | null
 }
 
+type QuizCatalogRow = {
+  quiz_id: string
+  question_count: number
+  possible_points: number
+}
+
+type ProfileAvatarRow = {
+  school_id: string | null
+  avatar_url: string | null
+}
+
 function mapQuestion(row: QuestionRow): Question {
   return {
     id: row.id,
@@ -143,17 +154,19 @@ export async function loadStudentWorkspace(schoolId: string) {
   const quizzes = (quizRows ?? []) as QuizRow[]
   const quizIds = quizzes.map((quiz) => quiz.id)
   const assignedIds = new Set((assignments ?? []).map((assignment) => assignment.quiz_id))
-  const [{ data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: attemptRows, error: attemptError }, { data: reporterRows, error: reporterError }] = await Promise.all([
+  const [{ data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: attemptRows, error: attemptError }, { data: reporterRows, error: reporterError }, { data: catalogRows, error: catalogError }] = await Promise.all([
     quizIds.length ? supabase.from('LQ_questions').select('id, quiz_id, position, part_id, part_position, question_type, prompt, points, options, requires_manual_review').in('quiz_id', quizIds).order('position') : Promise.resolve({ data: [], error: null }),
     quizIds.length ? supabase.from('LQ_quiz_parts').select('id, quiz_id, position, title').in('quiz_id', quizIds).order('position') : Promise.resolve({ data: [], error: null }),
     supabase.from('LQ_attempts').select('id, quiz_id, attempt_number, status, auto_score, manual_score, final_score, started_at, submitted_at, expires_at, time_taken_seconds').eq('school_id', schoolId).order('started_at', { ascending: false }),
     quizIds.length ? supabase.rpc('LQ_get_quiz_reporters', { p_quiz_ids: quizIds }) : Promise.resolve({ data: [], error: null }),
+    quizIds.length ? supabase.rpc('LQ_get_published_quiz_catalog', { p_quiz_ids: quizIds }) : Promise.resolve({ data: [], error: null }),
   ])
 
   if (questionError) throw questionError
   if (partError) throw partError
   if (attemptError) throw attemptError
   if (reporterError) throw reporterError
+  if (catalogError) throw catalogError
 
   const attempts = (attemptRows ?? []).filter((attempt) => attempt.status !== 'cancelled')
   const attemptIds = attempts.map((attempt) => attempt.id)
@@ -194,6 +207,8 @@ export async function loadStudentWorkspace(schoolId: string) {
     }
   }
 
+  const catalogByQuiz = new Map<string, QuizCatalogRow>(((catalogRows ?? []) as QuizCatalogRow[]).map((row) => [row.quiz_id, row]))
+
   const reportersByQuiz = new Map<string, QuizReporter[]>()
   const reporterRowsWithAvatars = await Promise.all(((reporterRows ?? []) as ReporterRow[]).map(async (reporter) => {
     const avatar = await signedAvatarUrl(reporter.avatar_url)
@@ -231,6 +246,7 @@ export async function loadStudentWorkspace(schoolId: string) {
     const parts = partsByQuiz.get(row.id) ?? []
     const attempt = attemptsByQuiz.get(row.id)
     const isAssigned = assignedIds.has(row.id)
+    const catalog = catalogByQuiz.get(row.id)
     const reporters = reportersByQuiz.get(row.id) ?? []
     const isReporter = reporters.some((reporter) => reporter.schoolId === schoolId)
     const isSubmitted = attempt?.status === 'submitted' || attempt?.status === 'reviewed' || attempt?.status === 'expired'
@@ -244,8 +260,8 @@ export async function loadStudentWorkspace(schoolId: string) {
       title: row.title,
       subject: row.subject,
       description: row.description,
-      questions: questions.length,
-      points: questions.reduce((sum, question) => sum + question.points, 0),
+      questions: Number(catalog?.question_count ?? questions.length),
+      points: Number(catalog?.possible_points ?? questions.reduce((sum, question) => sum + question.points, 0)),
       durationMinutes: Math.round(row.duration_seconds / 60),
       dueLabel: isAssigned ? 'Assigned to your school ID' : 'Not assigned to you',
       status: isReporter ? 'reported' : !isAssigned ? 'locked' : !attempt ? 'ready' : isSubmitted ? (hasFinalScore ? 'completed' : 'in-review') : 'ready',
@@ -253,7 +269,7 @@ export async function loadStudentWorkspace(schoolId: string) {
       score,
       passingScore: Number(row.passing_score),
       earnedPoints: attempt ? earnedPoints : undefined,
-      possiblePoints: attempt ? possiblePoints : questions.reduce((sum, question) => sum + question.points, 0),
+      possiblePoints: attempt ? possiblePoints : Number(catalog?.possible_points ?? questions.reduce((sum, question) => sum + question.points, 0)),
       questionsList: questions.map((question) => ({
         ...question,
         response: attempt ? answerTextByAttempt.get(attempt.id)?.get(question.id) : undefined,
@@ -266,6 +282,7 @@ export async function loadStudentWorkspace(schoolId: string) {
       startedAt: attempt?.started_at,
       submittedAt: attempt?.submitted_at,
       timeTakenSeconds: attempt?.time_taken_seconds === null || attempt?.time_taken_seconds === undefined ? undefined : Number(attempt.time_taken_seconds),
+      isAssigned,
       isReporter,
       canAnswer: isAssigned && !isReporter,
       reporters,
@@ -302,12 +319,13 @@ export async function loadStudentWorkspace(schoolId: string) {
 export async function loadAdminQuizzes() {
   if (!supabase) return []
 
-  const [{ data: quizRows, error: quizError }, { data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: assignmentRows, error: assignmentError }, { data: keyRows, error: keyError }] = await Promise.all([
+  const [{ data: quizRows, error: quizError }, { data: questionRows, error: questionError }, { data: partRows, error: partError }, { data: assignmentRows, error: assignmentError }, { data: keyRows, error: keyError }, { data: reporterRows, error: reporterError }] = await Promise.all([
     supabase.from('LQ_quizzes').select('id, title, subject, description, duration_seconds, passing_score, status').order('created_at', { ascending: false }),
     supabase.from('LQ_questions').select('id, quiz_id, position, part_id, part_position, question_type, prompt, points, options, requires_manual_review').order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, position, title').order('position'),
     supabase.from('LQ_quiz_assignments').select('quiz_id, is_active'),
     supabase.from('LQ_question_keys').select('question_id, answer_key'),
+    supabase.rpc('LQ_get_admin_quiz_reporters', { p_quiz_ids: null }),
   ])
 
   if (quizError) throw quizError
@@ -315,6 +333,7 @@ export async function loadAdminQuizzes() {
   if (partError) throw partError
   if (assignmentError) throw assignmentError
   if (keyError) throw keyError
+  if (reporterError) throw reporterError
 
   const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_key: string | null }>).map((row) => [row.question_id, row.answer_key]))
 
@@ -328,6 +347,26 @@ export async function loadAdminQuizzes() {
   const assignmentCounts = new Map<string, number>()
   for (const row of assignmentRows ?? []) {
     if (row.is_active !== false) assignmentCounts.set(row.quiz_id, (assignmentCounts.get(row.quiz_id) ?? 0) + 1)
+  }
+
+  const reportersByQuiz = new Map<string, QuizReporter[]>()
+  const reporterRowsWithAvatars = await Promise.all(((reporterRows ?? []) as ReporterRow[]).map(async (reporter) => {
+    const avatar = await signedAvatarUrl(reporter.avatar_url)
+    return {
+      quizId: reporter.quiz_id,
+      reporter: {
+        schoolId: reporter.school_id,
+        firstNames: reporter.first_names,
+        lastName: reporter.last_name,
+        avatarPath: reporter.avatar_url ?? undefined,
+        avatar: avatar.url ?? undefined,
+      } satisfies QuizReporter,
+    }
+  }))
+  for (const item of reporterRowsWithAvatars) {
+    const current = reportersByQuiz.get(item.quizId) ?? []
+    current.push(item.reporter)
+    reportersByQuiz.set(item.quizId, current)
   }
 
   return ((quizRows ?? []) as QuizRow[]).map((row) => {
@@ -347,6 +386,7 @@ export async function loadAdminQuizzes() {
       questionsList: questions,
       parts,
       assignedCount: assignmentCounts.get(row.id) ?? 0,
+      reporters: reportersByQuiz.get(row.id) ?? [],
     } satisfies Quiz
   })
 }
@@ -367,25 +407,35 @@ export async function loadRoster() {
 
 export async function loadAdminRoster() {
   if (!supabase) return [] as Student[]
-  const [{ data, error }, { data: assignments, error: assignmentError }] = await Promise.all([
+  const [{ data, error }, { data: assignments, error: assignmentError }, { data: profileRows, error: profileError }] = await Promise.all([
     supabase.from('LQ_student_roster').select('school_id, last_name, first_names, is_active, auth_user_id, must_change_password').order('last_name').order('first_names'),
     supabase.from('LQ_quiz_assignments').select('school_id, is_active'),
+    supabase.from('LQ_profiles').select('school_id, avatar_url').not('school_id', 'is', null),
   ])
   if (error) throw error
   if (assignmentError) throw assignmentError
+  if (profileError) throw profileError
   const assignmentCounts = new Map<string, number>()
   for (const assignment of assignments ?? []) {
     if (assignment.is_active !== false) assignmentCounts.set(assignment.school_id, (assignmentCounts.get(assignment.school_id) ?? 0) + 1)
   }
-  return sortStudents((data ?? []).map((student) => ({
-    schoolId: student.school_id,
-    lastName: student.last_name,
-    firstNames: student.first_names,
-    active: student.is_active,
-    accountReady: Boolean(student.auth_user_id),
-    mustChangePassword: student.must_change_password,
-    assignmentCount: assignmentCounts.get(student.school_id) ?? 0,
-  })) as Student[])
+  const avatarsBySchoolId = new Map(((profileRows ?? []) as ProfileAvatarRow[]).filter((profile) => profile.school_id).map((profile) => [profile.school_id as string, profile.avatar_url]))
+  const students = await Promise.all((data ?? []).map(async (student) => {
+    const avatarPath = avatarsBySchoolId.get(student.school_id) ?? null
+    const avatar = await signedAvatarUrl(avatarPath)
+    return {
+      schoolId: student.school_id,
+      lastName: student.last_name,
+      firstNames: student.first_names,
+      avatarPath: avatarPath ?? undefined,
+      avatar: avatar.url ?? undefined,
+      active: student.is_active,
+      accountReady: Boolean(student.auth_user_id),
+      mustChangePassword: student.must_change_password,
+      assignmentCount: assignmentCounts.get(student.school_id) ?? 0,
+    }
+  }))
+  return sortStudents(students as Student[])
 }
 
 export async function loadAdminAssignments() {
