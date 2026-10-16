@@ -1,0 +1,291 @@
+# Implementation Plan
+
+> **Deploy together:** the first migration drops `answer_key`, so the old edge functions and frontend break until they are redeployed. Ship in one release window, in this order: (1) migration `20261017000000_multi_answer_keys_and_submission_uploads.sql`, (2) migration `20261017010000_legacy_upload_reupload_requests.sql` (additive; must run after (1) and before the frontend, because the new frontend calls `LQ_my_reupload_requests` on every student dashboard load and selects `LQ_reupload_requests` in the admin submissions view), (3) `submit-attempt` and `finalize-expired-attempts`, (4) frontend build. The edge functions do not depend on migration (2).
+
+- [x] 1. Write bug condition exploration tests
+  - **Property 1: Bug Condition** - Alternative identification keys are rejected, blank keys save, uploads store names only, legacy uploads cannot be recovered
+  - **CRITICAL**: This test MUST FAIL on unfixed code. Failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior. It validates the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists
+  - Test harness setup (needed before any test can run; no framework exists today):
+    - Add pinned dev dependencies with exact versions (no `^`/`~`): `vitest` (5.0.5 at time of writing) and `fast-check` (4.10.2). Confirm vitest's peer range accepts the installed `vite` 7.x; if not, pin the newest vitest that does
+    - Add `"test": "vitest run"` to `package.json` scripts
+    - Add `vitest.config.ts` (or a `test` block in `vite.config.ts`) including `tests/**/*.test.ts`, environment `node`
+    - Add `tests/` to a tsconfig the build checks, or a dedicated `tsconfig.test.json`, so tests typecheck without breaking `tsc -b`
+  - Create `tests/bugCondition.test.ts`:
+    - Copy the current single-key comparison into the test as `originalGrade(answer, key) = normalize(answer) === normalize(key)` with `normalize` copied verbatim from `supabase/functions/submit-attempt/index.ts`
+    - **Scoped PBT Approach**: for deterministic grading, scope the property to `isBugCondition(GradeInput)`: identification, not `requiresReview`, non-blank answer, normalized answer in `{normalize(k)}` of configured keys but not equal to `normalize(keys[0])`. Generate key lists with fast-check and pick an alternative key `keys[i], i > 0`, then apply case/padding/whitespace variants
+    - Assert the expected behavior: the answer is graded correct with full points. On unfixed code the grader can only see `keys[0]`, so this fails
+    - Concrete case: keys `["Central Processing Unit", "CPU"]`, answer `"cpu"`
+    - SaveInput cases (`isBugCondition(SaveInput)`): an identification question with key fields `["  "]`, `[]`, `["A", " "]`, `["RAM", " ram "]` must be rejected with a validation message. On unfixed code `saveQuiz` accepts them (`trim() || null`). Exercise via a stubbed Supabase client, or assert directly against the payload logic extracted from `saveQuiz`
+    - UploadInput cases (`isBugCondition(UploadInput)`): selecting `diagram.png` must produce a `file_path` containing `/` under `{school_id}/{attempt_id}/`; a PDF and a 14 MB JPEG must be rejected. On unfixed code `QuestionInput` stores `file.name` and validates nothing
+    - Legacy review case (1.12): map a stored upload answer with `file_path = 'diagram.png'` through the submissions mapping and assert it is flagged as a legacy file name (`isLegacyFileName`) so the drawer shows the "never stored" notice. On unfixed code `mapAnswer` returns `answer = 'diagram.png'` as plain text with no legacy flag or notice
+  - Create `tests/reuploadBugCondition.test.ts` (`isBugCondition(ReuploadInput)`: upload question, legacy bare-name `file_path`, attempt `submitted`, `expired`, or `reviewed`):
+    - Load `src/lib/reuploads.ts` with a dynamic `import()` inside each test so a missing module fails only those tests, not the whole run
+    - **Scoped PBT Approach**: generate (legacy bare name, attempt status in `{submitted, expired, reviewed}`, empty request list, `now`) and assert `canRequestReupload(...) === true` (2.14, 2.23). On unfixed code the module does not exist, so this fails
+    - Admin drawer data (1.13): map a submitted attempt's legacy upload answer through `src/lib/submissions.ts` and assert it carries `answerId` and a `reupload` slot the drawer can use to offer "Request re-upload". On unfixed code `mapAnswer` returns neither
+    - Student discovery (1.14): with a stubbed Supabase client, assert the student workspace load returns `reuploadRequests` with one entry for a seeded open request (quiz title, question number, deadline). On unfixed code `loadStudentWorkspace` has no such field and never calls `LQ_my_reupload_requests`
+    - Student upload (1.14): assert `buildReuploadPath('S-1001', attemptId, questionId, requestId, 'png')` returns `S-1001/<attempt>/<question>_<request>_<uuid>.png` and `submitReupload` with a valid PNG calls `storage.upload` then `rpc('LQ_fulfill_reupload', ...)`. On unfixed code neither exists
+  - Expected-failure cases that need a live Supabase project go in the env-gated e2e suite created in task 3.15: alternative key via `finalize-expired-attempts`; delete leaving objects in `lq-submissions`; `rpc('LQ_request_reupload')` missing for a seeded submitted attempt with `file_path = 'diagram.png'`; the owning student uploads a PNG into `{school}/{attempt}/` (allowed by the original insert policy) but the `LQ_answers.file_path` update is rejected by RLS because the attempt is not `in_progress`, so the object can never be linked; the student reads zero `LQ_notifications` rows and has no request list. If the env vars are available, run those against unfixed code too and record the result
+  - Run `npm test` on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests FAIL (this is correct; it proves the bug exists)
+  - Document the counterexamples in the test file header or task notes (for example `originalGrade('cpu', 'Central Processing Unit') === false`; `file_path === 'diagram.png'` with no stored object; `import('src/lib/reuploads.ts')` fails; legacy answer stays a bare name after any student action on a submitted attempt)
+  - Mark task complete when the tests are written, run, and the failures are documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13, 1.14_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Single-key grading, normalization, MC/essay/upload routing, scoring, attempt immutability, and admin-only notifications unchanged
+  - **IMPORTANT**: Follow observation-first methodology. Inputs here are those where `isBugCondition` returns false
+  - Observe on UNFIXED code and record as fixed vectors:
+    - `normalize("  CPU  ")`, `normalize("Ｃｐｕ")`, `normalize("a\t\nb")` outputs
+    - Single-key identification answer `"  CPU  "` against key `"cpu"` is correct; blank identification answer is incorrect with 0 points
+    - MC answer equal to the stored option is correct; any other option is incorrect
+    - Essay, upload, and `requires_manual_review` questions skip auto-grading, set manual review, leave `final_score` null
+    - `deleteSubmission` for an attempt whose upload answers hold bare names (`file_path = 'diagram.png'`) calls `LQ_delete_attempt` and makes no `storage.remove` call (record via a stubbed Supabase client)
+    - The `submission_received` notification payload (`recipient_role`, `type`, `title`, message format, metadata keys) built in both edge functions
+    - `AdminApp.handleNotification` routing for `submission_received` and `password_reset_request` (both go to the students page today)
+    - `loadAdminNotifications` filters `recipient_role = 'admin'`
+  - Create `tests/preservation.test.ts`:
+    - Copy the original grading loop from `submit-attempt/index.ts` into the test as `gradeOriginal(questions, answers, keyByQuestion)` (per-answer `is_correct`/`points_awarded`, `auto_score`, part scores, `final_score`, status)
+    - Property: for arbitrary Unicode strings `a`, `k` (fast-check `fc.string({ unit: 'grapheme' })` plus whitespace/compatibility-form arbitraries), the original single-key comparison is stable. After the fix this same property asserts `matchesAnyKey(a, [k]) === (normalize(a) === normalize(k))`
+    - Property: for generated quizzes made of MC, single-key identification, essay, upload, manual-review-flagged questions, and blank answers, record `gradeOriginal` outputs. After the fix, assert the fixed loop produces identical outputs
+    - Write the test so that the "fixed" side can be swapped in by import (task 3.3 makes it import from `supabase/functions/_shared/answerKeys.ts`); on unfixed code both sides use the original
+    - Property (3.16): for generated attempts whose upload answers have arbitrary bare names (non-empty, no `/`), `deleteSubmission` via the stubbed client calls `LQ_delete_attempt` once and never passes a bare name to `storage.remove`. After the fix the only removal targets are real object paths under `${schoolId}/${attemptId}/` or the folder listing
+  - Create `tests/reuploadPreservation.test.ts` (inputs where `isBugCondition(ReuploadInput)` is false):
+    - Property (3.22, 2.23): for generated (question type, `file_path` as real path / empty / null / bare name, attempt status, request list with random statuses and deadlines, `now`) outside the bug condition (real path, non-upload type, empty `file_path`, `in_progress`/`cancelled` attempt, or an open unexpired request already present), no re-upload action is offered. On unfixed code the observation is "no action exists"; after the fix the same generators assert `canRequestReupload(...) === false`, swapped in by import like the grading test
+    - Property (3.21): legacy upload answers with no fulfilled request map to the same display (`isLegacyFileName` true, bare name unchanged) before and after
+    - Fixed vectors (3.24): the recorded `submission_received` payload is asserted byte-for-byte against both edge functions' builders
+    - Fixed vectors (3.24, 3.25): routing for `submission_received` and `password_reset_request` stays on the students page. Extract the routing decision into a pure `notificationTarget(notification)` helper if needed so it runs in the node environment; on unfixed code the helper mirrors today's logic
+    - Fixed vector (3.25): `loadAdminNotifications` via the stubbed client still filters on `recipient_role = 'admin'`
+  - Preservation checks that need a live project go in the e2e suite from task 3.15: student cannot read `LQ_question_keys`; avatar upload/remove unchanged; deleting an attempt without uploads writes one `submission_deleted` row and makes no storage removal; `lq-submissions` stays private; stored attempts are not regraded after key changes; migration leaves `LQ_answers.file_path` bare names byte-for-byte; student direct updates on a submitted attempt's `LQ_answers`/`LQ_attempts` are rejected (3.17); student storage writes outside the own school folder or into a submitted attempt folder are rejected (3.18); students read zero `LQ_notifications` rows (3.25); a normal start/autosave/submit creates one `submission_received` notification (3.23, 3.24). Run these against unfixed code when the env vars are available and record the baseline
+  - Run `npm test` on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (confirms the baseline behavior to preserve)
+  - Mark task complete when the tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 3.15, 3.16, 3.17, 3.18, 3.19, 3.20, 3.21, 3.22, 3.23, 3.24, 3.25_
+
+- [ ] 3. Fix multiple identification answer keys, real image uploads, and legacy upload re-upload
+
+  - [x] 3.1 Add the migration
+    - New file `supabase/migrations/20261017000000_multi_answer_keys_and_submission_uploads.sql`
+    - Add `answer_keys text[]` to `LQ_question_keys`; backfill `answer_keys = array[answer_key]` where `answer_key is not null and answer_keys is null` (no trimming or rewriting); drop `answer_key`
+    - Add `lq_question_keys_answer_keys_check` (`answer_keys is null or (cardinality >= 1 and no null elements)`) as `not valid`
+    - Update `storage.buckets` for `lq-submissions`: `file_size_limit = 10485760`, `allowed_mime_types = {image/jpeg,image/png,image/webp}`
+    - Replace `lq_submission_student_upload` with a tighter insert policy: `foldername[1] = LQ_my_school_id()` and `foldername[2]` is an `LQ_attempts.id` owned by `auth.uid()`, `status = 'in_progress'`, matching `school_id`, and `not LQ_is_quiz_reporter(quiz_id)`
+    - Add `lq_submission_student_delete_superseded` (delete, authenticated): own school folder, own `in_progress` attempt, and no `LQ_answers.file_path` equals `storage.objects.name`
+    - Leave `LQ_question_keys` RLS, the read policy, the admin delete policy, `LQ_delete_attempt`, and all `lq-avatars` policies untouched
+    - Do not update, rewrite, or delete any `LQ_answers` rows: legacy `file_path` bare names stay exactly as stored, and no stored `is_correct`/`points_awarded`/score/status columns are recomputed
+    - _Bug_Condition: isBugCondition(SaveInput) cannot be stored with a single `text` key; isBugCondition(UploadInput) has no bucket limits or student cleanup path_
+    - _Expected_Behavior: migrated `answer_keys = ARRAY[answer_key]` byte-for-byte; bucket rejects non-image or >10 MB objects_
+    - _Preservation: bucket stays private, students limited to own school-ID folder, admins read/delete, key secrecy unchanged; `LQ_answers.file_path` and stored grading data untouched_
+    - _Requirements: 2.2, 2.7, 2.8, 2.10, 2.12, 3.10, 3.12, 3.13, 3.14, 3.15_
+
+  - [x] 3.2 Create the shared answer keys module
+    - New file `supabase/functions/_shared/answerKeys.ts`, no imports, usable by Deno and Vite
+    - `normalize(value)`: body moved verbatim from the edge functions
+    - `toKeyList(row)`: `row?.answer_keys ?? []`
+    - `matchesAnyKey(answer, keys)`: normalized answer equals the normalized form of any key
+    - `validateAnswerKeys(fields)`: trims; rejects zero fields, any blank field, or normalized duplicates with a message naming the problem; returns trimmed keys in admin order
+    - Add unit tests in `tests/answerKeys.test.ts` for the vectors in the design (`[]`, `['']`, `['A', ' ']`, `['RAM', ' ram ']`, `['ﬁ', 'fi']` rejected; `['CPU', 'Central Processing Unit']` accepted)
+    - _Bug_Condition: isBugCondition(GradeInput) and isBugCondition(SaveInput) from design_
+    - _Expected_Behavior: any configured key matches; invalid key lists are rejected_
+    - _Preservation: normalization (NFKC, trim, lowercase, collapse whitespace) unchanged_
+    - _Requirements: 2.2, 2.3, 2.4, 2.5, 3.1, 3.2_
+
+  - [x] 3.3 Update both grading edge functions
+    - `supabase/functions/submit-attempt/index.ts` and `supabase/functions/finalize-expired-attempts/index.ts`
+    - Import `matchesAnyKey` and `toKeyList` from `../_shared/answerKeys.ts`; delete the local `normalize` copy
+    - Select `question_id, answer_keys`; build `keysByQuestion: Map<string, string[]>`
+    - Replace the comparison with `hasResponse && matchesAnyKey(answer?.answer_text, keysByQuestion.get(question.id) ?? [])`
+    - Change nothing else (manual-review branch, part stats, score math, updates, notifications)
+    - Do not add any regrade path: both functions still grade only `in_progress` attempts, so already submitted or reviewed attempts keep their stored results when keys change
+    - Point the preservation test's "fixed" side at the shared module
+    - _Bug_Condition: isBugCondition(GradeInput) where only an alternative key matches_
+    - _Expected_Behavior: correct with full points in both grading paths_
+    - _Preservation: single-key, MC, essay, upload, manual-review, and blank-answer grading identical; score/status/notification logic untouched; no regrading of stored attempts_
+    - _Requirements: 2.3, 2.4, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.14_
+
+  - [x] 3.4 Update types and admin quiz loading
+    - `src/types.ts`: `Question.answers?: string[]`; `SubmissionAnswer.correctAnswers: string[]` (replacing `correctAnswer`) and `filePath?: string | null`
+    - `src/lib/workspace.ts`: `loadAdminQuizzes` selects `question_id, answer_keys`; `mapAdminQuestion` sets `answer = keys[0]` and, for identification, `answers = keys`. Student loaders unchanged (`answer: undefined`)
+    - Enable importing the shared `.ts` module from `src` (for example `allowImportingTsExtensions` in `tsconfig.app.json`, which is valid with `noEmit`, and include the `_shared` file)
+    - _Bug_Condition: isBugCondition(SaveInput); identification keys loaded as a list_
+    - _Expected_Behavior: admins see all configured keys_
+    - _Preservation: students never receive keys_
+    - _Requirements: 2.1, 2.6, 3.13_
+
+  - [x] 3.5 Update `saveQuiz` in `src/lib/admin.ts`
+    - Validate every identification question with `validateAnswerKeys(identificationKeyFields(question))` before any write; return `{ id: null, error }` on failure
+    - Key upsert payload `{ question_id, answer_keys }`: identification → validated keys; MC → `[answer.trim()]`; essay/upload → `answer?.trim() ? [answer.trim()] : null`
+    - `identificationKeyFields(question) = question.answers ?? (question.answer ? [question.answer] : [''])` (covers PDF-imported questions)
+    - Saving changed keys writes only `LQ_question_keys`; it never touches `LQ_answers`, `LQ_attempts`, or part scores
+    - Add unit tests for the payload shapes, and assert (stubbed client) that a key-change save issues no writes to attempt/answer tables
+    - _Bug_Condition: isBugCondition(SaveInput)_
+    - _Expected_Behavior: blank/duplicate/empty key lists rejected; valid lists stored as `text[]`_
+    - _Preservation: MC stores one key as a one-element array; essay/upload keys never used for grading; key changes do not regrade stored attempts_
+    - _Requirements: 2.2, 2.5, 3.4, 3.14_
+
+  - [x] 3.6 Update the quiz builder in `src/App.tsx`
+    - `BuilderQuestion`: identification renders an "Accepted answers" list bound to `answers`, each input with a remove button (`aria-label="Remove answer key N"`, disabled when one remains) and an "Add answer key" button; switching to identification seeds `answers` from `identificationKeyFields`. MC markup unchanged
+    - `AdminBuilderWorkspace.save`: run `validateAnswerKeys` for identification questions and show a warning toast naming the part and question
+    - _Bug_Condition: isBugCondition(SaveInput)_
+    - _Expected_Behavior: admins add/remove multiple keys; save blocked with a clear message when invalid_
+    - _Preservation: MC builder UI and validation unchanged_
+    - _Requirements: 2.1, 2.2, 2.5, 3.4_
+
+  - [x] 3.7 Create `src/lib/submissionUploads.ts`
+    - Constants `SUBMISSION_BUCKET`, `MAX_SUBMISSION_BYTES = 10485760`, `ALLOWED_SUBMISSION_TYPES` (jpeg/png/webp with matching extensions)
+    - `validateSubmissionImage(file)` (pure): MIME in allow-list, extension matches, `0 < size <= 10 MB`
+    - `isLegacyFileName(v)`: `v` is non-empty and contains no `/`
+    - `buildSubmissionPath(schoolId, attemptId, questionId, ext)` → `${schoolId}/${attemptId}/${questionId}_${crypto.randomUUID()}.${ext}`
+    - `uploadSubmissionImage({ attemptId, schoolId, questionId, file, previousPath })`: validate → upload (`upsert: false`, `contentType`) → upsert the `LQ_answers` row `file_path` → remove the new object if the row write fails → best-effort remove `previousPath` only if it is a real object path (a legacy bare name is overwritten in the row with no storage delete)
+    - `removeSubmissionImage({ attemptId, questionId, path })`: null the row's `file_path`, then remove the object; for a legacy bare name only null the row
+    - `signedSubmissionUrl(path)`: `createSignedUrl(path, 300)`; legacy names (no `/`) return `{ url: null, error }` without calling storage
+    - `listAttemptObjectPaths(schoolId, attemptId)`: `list` the attempt folder and map to full paths
+    - Add unit tests and a fast-check property: generated `{ type, name, size }` are accepted exactly when they satisfy the allow-list and size bounds; `buildSubmissionPath` format; legacy short-circuit; `uploadSubmissionImage` with a bare-name `previousPath` and `removeSubmissionImage` with a bare name never call `storage.remove`
+    - Leave `src/lib/profile.ts` and `lq-avatars` untouched
+    - _Bug_Condition: isBugCondition(UploadInput) for select/replace/remove/review_
+    - _Expected_Behavior: valid images stored under `{school_id}/{attempt_id}/`, invalid files rejected with the answer unchanged, superseded objects removed; legacy bare names replaced without a storage delete_
+    - _Preservation: avatar storage unchanged; bucket stays private; no storage call targets a bare name_
+    - _Requirements: 2.7, 2.8, 2.9, 2.10, 2.13, 3.10, 3.12, 3.16_
+
+  - [x] 3.8 Wire uploads into the student quiz in `src/App.tsx`
+    - `QuestionInput`: new `upload` prop `{ attemptId, schoolId, onError, onBusyChange }`; picker copy "JPG, PNG, or WEBP image up to 10 MB" with `accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"`; calls `uploadSubmissionImage`; shows "Uploading…"; shows the file name (or path basename after reload); remove button calls `removeSubmissionImage`; picker disabled until `attemptId` exists; validation errors inline (`role="alert"`) and via toast, answer unchanged
+    - `StudentQuiz` and `LegacyStudentQuiz`: pass the `upload` prop, track in-flight uploads, block manual submit/exit with a toast while one runs (timeout auto-submit proceeds as today)
+    - Resumed in-progress attempt with a legacy bare name: `QuestionInput` shows the name with the "never stored" notice; picking a real image passes the bare name as `previousPath`, so the row gets the object path and no storage delete is attempted for the bare name
+    - `src/lib/attempts.ts`: `saveAttemptAnswers` keeps writing `file_path` from state, which now holds the object path
+    - _Bug_Condition: isBugCondition(UploadInput) for select/replace/remove_
+    - _Expected_Behavior: the upload reaches the bucket and `file_path` stores the object path; a legacy bare name can be replaced by a real image_
+    - _Preservation: upload questions still skip auto-grading and go to manual review_
+    - _Requirements: 2.7, 2.8, 2.10, 2.13, 3.6, 3.16_
+
+  - [x] 3.9 Update submissions loading, review drawer, and deletion
+    - `src/lib/submissions.ts`: select `answer_keys`; `mapAnswer` sets `correctAnswers = keys` and `filePath`; upload display text becomes the path basename
+    - `SubmissionReviewDrawer`: identification shows "Accepted answers" as a list; other types show "Correct answer" with `correctAnswers[0]`
+    - New `SubmissionImage` component: legacy names (`isLegacyFileName`) show the file name plus the notice "Image not available: this answer was submitted before image uploads were enabled, so only the file name was saved." with no storage call, and the points/correctness controls stay enabled for manual grading; otherwise request `signedSubmissionUrl(path)` and render `<img alt="Student upload for question N">` plus an "Open full size" link; on error or missing object show "Image unavailable" with the path
+    - `deleteSubmission({ id, schoolId })`: collect referenced `file_path` values under `${schoolId}/${id}/` (bare names are skipped) ∪ `listAttemptObjectPaths`; call `LQ_delete_attempt`; on failure return the error and touch no storage; on success `storage.remove(paths)` when non-empty and return `{ error: null, warning? }`
+    - Update the drawer's `remove()` caller to pass `{ id, schoolId }` and surface the warning toast
+    - Keep points/correctness editing and `LQ_review_attempt` unchanged; the drawer shows stored `is_correct`/`points_awarded` as-is (no recompute against current keys)
+    - _Bug_Condition: isBugCondition(UploadInput) for review/delete; identification drawer shows one key; legacy bare names shown as if stored_
+    - _Expected_Behavior: all keys shown; signed-URL image or clear fallback; legacy names show the "never stored" notice and remain gradable; attempt objects removed on delete_
+    - _Preservation: manual review flow unchanged; stored grading data not regraded; deleting an attempt without uploads (or with only bare names) writes the same `submission_deleted` audit row and removes nothing from storage for bare names_
+    - _Requirements: 2.6, 2.9, 2.11, 2.13, 3.9, 3.11, 3.14, 3.16_
+
+  - [x] 3.10 Add the re-upload migration
+    - New file `supabase/migrations/20261017010000_legacy_upload_reupload_requests.sql`, additive only, runs after `20261017000000`
+    - Table `LQ_reupload_requests` as in the design: `attempt_id`/`question_id`/`answer_id` FKs with `on delete cascade`, `original_file_name`, `requested_by`, `requested_at`, nullable `deadline`, `status in ('open','fulfilled','cancelled')`, `fulfilled_at`, `fulfilled_path`, `cancelled_at`, `cancelled_by`, `cancel_reason in ('admin','expired')`, and `lq_reupload_state_check`; partial unique index `lq_reupload_one_open_per_answer (answer_id) where status = 'open'`; index `lq_reupload_attempt_idx (attempt_id, status)`
+    - RLS: enable; `lq_reupload_admin_all` (all, `LQ_is_admin()`); `lq_reupload_student_read` (select, own attempt in own school, `LQ_workspace_ready()`); no student insert/update/delete policy
+    - `LQ_request_reupload(p_answer_id, p_deadline default null)` (security definer, `search_path = public`): admin check; lock answer/attempt/question; distinct rejections for not found, non-upload question, attempt not `submitted`/`expired`/`reviewed` (`in_progress` and `cancelled` rejected), `file_path` null/blank/containing `/`, deadline not in the future; existing open unexpired request → reject; existing open lapsed request → close as `cancelled` with `cancel_reason = 'expired'`; insert with `original_file_name = file_path`; audit `reupload_requested`; return the row as JSON
+    - `LQ_cancel_reupload(p_request_id)` (security definer): admin check; lock; reject unless `open` (lapsed allowed); set `cancelled`, `cancel_reason = 'admin'`; audit `reupload_cancelled`
+    - Storage helpers `LQ_can_upload_reupload_object(p_name)` and `LQ_can_discard_reupload_object(p_name)` (security definer, stable) with the ownership, school, attempt status (`submitted`/`expired`/`reviewed`), open/unexpired, two-segment folder, and `{question_id}_{request_id}_` filename-prefix checks from the design; the discard helper also requires `r.status <> 'fulfilled'` and no `LQ_answers.file_path` referencing the object
+    - Additive permissive policies on `storage.objects`: `lq_submission_student_reupload` (insert) and `lq_submission_student_discard_reupload` (delete), both scoped to `bucket_id = 'lq-submissions'`
+    - `LQ_fulfill_reupload(p_request_id, p_path)` (security definer): owner/school/open/unexpired checks with one "This re-upload request is no longer open" message (no probing); attempt status in `submitted`/`expired`/`reviewed`; literal prefix plus `^[0-9a-f-]{36}\.(jpg|jpeg|png|webp)$` suffix check; object exists with `owner_id = actor`, allowed MIME, size 1..10485760; answer still belongs to the request and still holds a legacy name; update only `LQ_answers.file_path`; set request `fulfilled` with `fulfilled_at`/`fulfilled_path`; insert one `reupload_fulfilled` admin notification ("Re-uploaded image received", student name or school id, question number by position, quiz title; metadata `school_id`, `quiz_id`, `attempt_id`, `question_id`, `request_id`); audit `reupload_fulfilled`; return `{ status, file_path }`. No statement on `LQ_attempts` or `LQ_attempt_part_scores`, and no write to `is_correct`, `points_awarded`, `feedback`, `reviewed_*`
+    - `LQ_my_reupload_requests()` (security definer, stable): caller's open, unexpired requests with exactly `request_id, attempt_id, quiz_id, quiz_title, question_id, question_number, prompt, original_file_name, deadline, requested_at`
+    - Grants: `revoke all … from public, anon`; `grant execute … to authenticated` for all six functions
+    - Do not modify `lq_answers_student_update`, `lq_attempts_student_update`, `LQ_protect_student_attempt`, `LQ_protect_student_answer`, `LQ_delete_attempt`, the existing `lq-submissions` policies, `lq_notifications_recipient_read`, or the student quiz/question read policies
+    - _Bug_Condition: isBugCondition(ReuploadInput): no request record, admin RPC, student list, or server-side write path for legacy answers on closed attempts_
+    - _Expected_Behavior: Property 5 from design: one open request per answer, owner-only fulfill that sets only `file_path`, rejection after fulfill/cancel/deadline, admin notification, cascade on delete_
+    - _Preservation: Property 6 from design: no regrade, no attempt/part-score writes, student storage writes still confined, closed attempts still immutable for direct student updates, notifications still admin-only, no keys in the student list_
+    - _Requirements: 2.14, 2.15, 2.19, 2.20, 2.22, 2.23, 2.24, 2.25, 3.17, 3.18, 3.19, 3.20, 3.24, 3.25_
+
+  - [ ] 3.11 Create `src/lib/reuploads.ts`
+    - Pure helpers: `isRequestOpen(r, now)`, `effectiveReuploadStatus(r, now)`, `canRequestReupload({ questionType, filePath, attemptStatus, requests, now })` (mirrors the RPC checks: upload question, legacy bare name, `attemptStatus` in `submitted`/`expired`/`reviewed`, no open unexpired request; `in_progress` and `cancelled` return false), `buildReuploadPath(schoolId, attemptId, questionId, requestId, ext)` → `{school}/{attempt}/{question}_{request}_{uuid}.{ext}`, `isValidReuploadPath(path, ctx)` (same rule as the SQL check), `isAwaitingImageReview(answer, latestRequest)`
+    - `loadMyReuploadRequests()` → `rpc('LQ_my_reupload_requests')` mapped to `ReuploadRequest`
+    - `submitReupload({ request, schoolId, file })`: `validateSubmissionImage` (same messages; nothing uploaded on failure) → `isRequestOpen` → `storage.upload(path, file, { contentType, upsert: false })` → `rpc('LQ_fulfill_reupload', { p_request_id, p_path })` → on RPC error best-effort `storage.remove([path])` and return the error; map a storage RLS denial to "This re-upload request is no longer open."
+    - Admin: `requestReupload(answerId, deadline | null)` (reject a non-future deadline client-side), `cancelReupload(requestId)` (after success, best-effort list the attempt folder filtered by `{question_id}_{request_id}_` and remove orphans), `loadReuploadRequests(attemptIds)`
+    - Unit tests in `tests/reuploads.test.ts` for the design's vectors: `isRequestOpen`/`effectiveReuploadStatus` (no deadline; deadline −1 s, = now, +1 s; `fulfilled`/`cancelled` never open); `canRequestReupload` true/false cases (true for `submitted`/`expired`/`reviewed`, false for `in_progress`/`cancelled`) including a lapsed open request; `buildReuploadPath`/`isValidReuploadPath` canonical vs. wrong school/attempt, swapped ids, `..`, extra folder, uppercase/missing extension, `.gif`; `isAwaitingImageReview` (null/earlier `reviewed_at` true, later false, non-fulfilled false); `submitReupload` with a mocked client (invalid file → no storage/RPC call; upload error → no RPC; RPC error → one `storage.remove([path])`; success → no remove)
+    - Property-based tests (fast-check): request eligibility equals the spec predicate; a pure request state-machine model where uploads/fulfills succeed only for open, unexpired requests, `fulfilled`/`cancelled` are terminal, and at most one request per answer is open; `isValidReuploadPath` accepts exactly the unmutated canonical form across generated mutations
+    - Point the `tests/reuploadBugCondition.test.ts` imports and the `tests/reuploadPreservation.test.ts` "fixed" side at this module
+    - _Bug_Condition: isBugCondition(ReuploadInput) for request/cancel/discover/upload_
+    - _Expected_Behavior: client mirrors the server rules for eligibility, openness, path format, and validation; failed fulfills leave no linked or orphaned object_
+    - _Preservation: same upload validation as normal answers; no request action for non-eligible answers_
+    - _Requirements: 2.14, 2.15, 2.18, 2.19, 2.21, 2.22, 2.23, 3.18, 3.20, 3.22_
+
+  - [ ] 3.12 Update types and data loading for re-upload requests
+    - `src/types.ts`: `StudentView` adds `'reupload'`; new `ReuploadRequest { id, attemptId, quizId, quizTitle, questionId, questionNumber, prompt, originalFileName, deadline, requestedAt }`; `SubmissionAnswer` adds `answerId?` and `reupload?` (latest request: `id`, effective `status`, `deadline`, `requestedAt`, `fulfilledAt`, `originalFileName`, `awaitingReview`); `Submission` adds `attemptStatus` and `hasImageAwaitingReview`
+    - `src/lib/workspace.ts`: `loadStudentWorkspace` also returns `reuploadRequests` from `loadMyReuploadRequests()`; on error log and return `[]` so the dashboard still loads. `loadAdminNotifications` unchanged
+    - `src/lib/submissions.ts`: `loadAdminSubmissions` loads `LQ_reupload_requests` for the listed attempts, attaches the latest request per answer with `effectiveReuploadStatus`, computes `awaitingReview` and `hasImageAwaitingReview` (2.26: latest request `fulfilled` and `reviewed_at` null or earlier than `fulfilled_at`). `mapSubmissionStatus` and `deleteSubmission` unchanged (re-uploaded objects already sit under `{school_id}/{attempt_id}/`)
+    - Add unit tests with a stubbed client: workspace load returns requests and degrades to `[]` on RPC error; submissions mapping attaches the latest request and flags a fulfilled request newer than `reviewed_at`
+    - _Bug_Condition: isBugCondition(ReuploadInput) for discover/review_
+    - _Expected_Behavior: student workspace exposes open requests; admin submissions expose per-answer request state and the awaiting-review flag_
+    - _Preservation: notifications still admin-only; submission status categories unchanged; delete behavior unchanged_
+    - _Requirements: 2.16, 2.21, 2.25, 2.26, 3.11, 3.19, 3.25_
+
+  - [ ] 3.13 Add the student banner and re-upload page in `src/App.tsx`
+    - `App` keeps `reuploadRequests` from the workspace load and `selectedReuploadId`; `StudentApp` gets `reuploadRequests` and `onOpenReupload(request)` that navigates to `'reupload'` (title "Re-upload image", eyebrow "Missing image")
+    - `ReuploadRequestsBanner` on `StudentDashboard` and `StudentScoresPage`, above existing content, hidden when empty: `<section aria-labelledby>` heading "Image re-upload needed", one row per request with quiz title, "Question N", "Due {local date/time}" or "No deadline", and a "Re-upload image" button
+    - `StudentReuploadPage`: resolves the request by id; if missing or no longer open shows "This re-upload request is no longer open." with a back button; otherwise shows quiz title, "Question N", the prompt, "Original file: {name}", the deadline, and one picker with the normal upload copy and `accept`. No timer, no other questions or answers. Validation errors inline with `role="alert"`; "Uploading…" disabled button while sending; on success a `role="status"` panel "Image received. Your teacher will review it.", a workspace refresh so the banner entry disappears, and "Back to dashboard"
+    - Do not change `StudentQuiz`, `LegacyStudentQuiz`, `QuestionInput`, the timer, or autosave for this flow
+    - Extract pure view helpers (for example `reuploadBannerRows(requests)` and `reuploadPageState(requests, id, now)`) and unit test them in node: one row per request with title, question number, formatted deadline or "No deadline"; unknown/closed id → closed state; the page state carries no answer keys, options, points, or other answers
+    - _Bug_Condition: isBugCondition(ReuploadInput) for discover/open_page/upload_
+    - _Expected_Behavior: banner on dashboard and score history; single-question page with no timer; same validation messages; confirmation and banner removal after fulfill_
+    - _Preservation: normal quiz-taking flow untouched; no student notification centre; no keys/points shown_
+    - _Requirements: 2.16, 2.17, 2.18, 2.19, 2.22, 2.24, 3.19, 3.23, 3.25_
+
+  - [ ] 3.14 Add admin re-upload controls, badge, and notification click-through in `src/App.tsx`
+    - `SubmissionReviewDrawer` upload answers:
+      - Legacy name and `canRequestReupload` true: the 2.13 notice plus "Request re-upload", revealing an optional "Deadline" `datetime-local` (admin local time, sent as ISO 8601, past values blocked with a message) and a confirm button; on success re-render via `onSaved`
+      - Open request: "Re-upload requested {date}", "Due {date}" or "No deadline", and "Cancel request" behind a `ConfirmModal`
+      - Lapsed open request: "Re-upload request expired {date}" and "Request re-upload" again
+      - Fulfilled: existing `SubmissionImage` signed-URL rendering (with the 2.9 fallback), "Re-uploaded {date} (original file: {name})", and a "New image awaiting review" badge when `awaitingReview` (2.26); points/correctness controls and `LQ_review_attempt` unchanged, so saving a review clears the flag; a `reviewed` attempt keeps its status and scores
+      - Real object path with no request: unchanged, no request action. Cancelled history as one muted line
+    - Submissions list: "New image" badge on rows where `hasImageAwaitingReview`; "needs review"/"graded" categories still from `mapSubmissionStatus`
+    - `AdminApp.handleNotification`: `reupload_fulfilled` marks read and opens `'submissions'` with the drawer focused on `metadata.attempt_id`; all other types keep today's routing. Route through the pure `notificationTarget(notification)` helper from task 2
+    - Extract a pure `drawerReuploadState(answer, now)` helper and unit test it: request action only for eligible legacy answers; open → due date and cancel; lapsed → expired and request again; fulfilled → image, re-upload line, and badge when awaiting review; real path → none. Unit test `notificationTarget` for `reupload_fulfilled`, `submission_received`, and `password_reset_request`
+    - _Bug_Condition: isBugCondition(ReuploadInput) for request/cancel/review_
+    - _Expected_Behavior: admin can request (with optional deadline) and cancel; fulfilled image shown via signed URL and gradable manually; reviewed attempts flagged "New image awaiting review"; notification opens the submission_
+    - _Preservation: no request action for real paths or ineligible answers; review flow, status categories, and other notification routing unchanged; no automatic regrade or status change_
+    - _Requirements: 2.14, 2.15, 2.20, 2.21, 2.22, 2.23, 2.26, 3.9, 3.20, 3.21, 3.22, 3.24_
+
+  - [ ] 3.15 Add the env-gated end-to-end suite
+    - New file `tests/e2e/multiAnswerKeysUploads.test.ts`, skipped unless `LATEQUIZ_E2E_SUPABASE_URL`, `LATEQUIZ_E2E_ANON_KEY`, and `LATEQUIZ_E2E_SERVICE_ROLE_KEY` are set (local `supabase start` or a staging project; never production). Apply both migrations in deploy order
+    - Identification: admin saves a quiz with an identification question keyed `["Central Processing Unit", "CPU"]` plus an MC question; student answers `"cpu"` and submits via `submit-attempt`; assert full points and unchanged MC grading. Repeat with an expired attempt through `finalize-expired-attempts`
+    - Image submission: upload a PNG, assert the object exists at `{school}/{attempt}/…` and `file_path` matches; replace with a WEBP and assert the PNG is gone; PDF and >10 MB rejected by client and bucket; uploads into another student's folder or a submitted attempt denied by RLS; after submit the student cannot delete the object
+    - Admin review and delete: signed URL fetch returns 200 with an image content type; deleting the submission removes the rows, writes the `submission_deleted` audit row, and leaves the attempt folder empty
+    - Legacy uploads: seed (service role, before the migration where possible) a submitted attempt with `file_path = 'diagram.png'` and an in-progress attempt with `file_path = 'old.png'`
+      - After the migration both `file_path` values are byte-for-byte unchanged
+      - Admin review: drawer data flags the submitted answer as legacy with no signed-URL request; `LQ_review_attempt` still saves points/correctness for it
+      - Student resumes the in-progress attempt, uploads a PNG: `file_path` becomes the object path and no storage delete is issued for `old.png`
+      - Admin deletes the legacy submission: rows and the `submission_deleted` audit row as before, and no `storage.remove` call includes `diagram.png`
+    - No regrade: submit and review an attempt, then add/change identification keys on that question; the attempt's `is_correct`, `points_awarded`, `auto_score`, `final_score`, part scores, status, and review data are unchanged; a new attempt is graded with the new keys
+    - Re-upload (seed a submitted attempt for student A with a legacy `file_path = 'diagram.png'`; snapshot every `LQ_answers` column except the target `file_path`/`updated_at`, every `LQ_attempts` column, and all `LQ_attempt_part_scores` rows before each scenario):
+      - Request: admin calls `LQ_request_reupload` with a future deadline; one `open` row and a `reupload_requested` audit row; a second request while open is rejected; requests for a real-path answer, an essay question, and `in_progress`/`cancelled` attempts are rejected; a past deadline is rejected
+      - Banner listing: student A's `LQ_my_reupload_requests()` returns exactly one row with exactly the documented columns (no keys, options, points, correctness, feedback); student A's `LQ_reupload_requests` select returns the row; student insert/update/delete on `LQ_reupload_requests` are rejected
+      - Upload + fulfill: student A uploads a PNG to `buildReuploadPath(...)` and calls `LQ_fulfill_reupload`; `file_path` equals the path, request `fulfilled` with `fulfilled_path`, one `reupload_fulfilled` admin notification with the expected title/message/metadata, a `reupload_fulfilled` audit row, the request gone from the student list, and an admin signed URL returning 200 with an image content type
+      - No regrade: after fulfill (and after the request → cancel → request → lapse → request → fulfill lifecycle with rejected fulfills in between), the snapshot is identical; the admin then saves a review through `LQ_review_attempt` successfully
+      - Rejections after fulfill: a second fulfill and a new storage upload under the request prefix are rejected
+      - Rejections after cancel: admin `LQ_cancel_reupload` writes a `reupload_cancelled` audit row; storage upload and `LQ_fulfill_reupload` are then rejected
+      - Rejections after deadline: set `deadline = now() - interval '1 second'` via service role; storage upload and fulfill are rejected; the request no longer appears in `LQ_my_reupload_requests()`; a new `LQ_request_reupload` closes it as `cancelled`/`expired` and opens a fresh one
+      - Path checks: fulfill with a foreign-folder path, another request's prefix, a non-existent object, or an object uploaded by someone else is rejected; run the generated `isValidReuploadPath` mutation vectors against `LQ_fulfill_reupload` with a small `numRuns`
+      - Failed-fulfill cleanup: upload, cancel the request, then call `submitReupload`'s fulfill step; the client removes the object and `storage.list` of the attempt folder no longer contains it
+      - Cross-student denial: student B's select on A's request returns zero rows, B's `LQ_my_reupload_requests()` excludes it, B's upload into A's folder is denied, and B's `LQ_fulfill_reupload` with A's request id gets the same "no longer open" message
+      - Reviewed attempt: save a review (attempt `reviewed`, final score set), then admin calls `LQ_request_reupload` on the reviewed attempt's legacy answer (accepted), and student A fulfills; status stays `reviewed`, scores unchanged; submissions data shows `hasImageAwaitingReview` and the answer's `awaitingReview` (2.26); saving a review again through `LQ_review_attempt` clears the flag
+      - Delete cascade: delete a submission with one open and one fulfilled request; both request rows are gone, the attempt folder (including the re-uploaded object) is empty, and the `submission_deleted` audit row exists
+      - Closed attempts stay closed: with and without an open request, student A's direct `update` on that attempt's `LQ_answers` (including `file_path`) and `LQ_attempts` is rejected
+      - Normal flow untouched: with an open request on a past attempt, student A starts, autosaves, and submits a new attempt; grading matches, one `submission_received` notification with the unchanged payload is created, and student A still reads zero `LQ_notifications` rows
+    - Preservation checks: student `select` on `LQ_question_keys` returns zero rows; avatar upload/remove unchanged; deleting an attempt without uploads writes one audit row and makes no storage removal; migration backfill keeps padded, mixed-case, and Unicode keys byte-for-byte
+    - Clean up all seeded users, quizzes, attempts, requests, notifications, and objects after the run
+    - _Requirements: 2.3, 2.4, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.19, 2.20, 2.21, 2.22, 2.23, 2.24, 2.25, 2.26, 3.10, 3.11, 3.12, 3.13, 3.14, 3.15, 3.16, 3.17, 3.18, 3.19, 3.20, 3.23, 3.24, 3.25_
+
+  - [ ] 3.16 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Any configured identification key is accepted, keys are validated, image uploads are stored, validated, viewable, and cleaned up, and legacy uploads can be re-uploaded on admin request
+    - **IMPORTANT**: Re-run the SAME tests from task 1. Do NOT write new tests
+    - The tests from task 1 encode the expected behavior; passing confirms it is satisfied (design Properties 1, 2, and 5)
+    - Run `npm test`
+    - **EXPECTED OUTCOME**: Tests PASS (confirms the bug is fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.17, 2.18, 2.19, 2.20, 2.21, 2.22, 2.23, 2.24, 2.25, 2.26_
+
+  - [ ] 3.17 Verify preservation tests still pass
+    - **Property 2: Preservation** - Single-key grading, normalization, MC/essay/upload routing, scoring, attempt immutability, and admin-only notifications unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2. Do NOT write new tests
+    - Run `npm test` with the fixed sides pointed at the shared answer keys module and `src/lib/reuploads.ts` (design Properties 3, 4, and 6)
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Live-project preservation checks (3.10–3.13, 3.15, 3.17, 3.18, 3.20, 3.23) run in the task 3.15 suite
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.14, 3.16, 3.19, 3.21, 3.22, 3.24, 3.25_
+
+- [ ] 4. Checkpoint - Ensure all tests pass
+  - Run `npm run build` (`tsc -b && vite build`) and fix any type or build errors
+  - Run `npm test`; all unit and property-based suites pass
+  - If the e2e env vars are available, run the end-to-end suite and confirm the identification, image-submission, and re-upload flows pass; otherwise state that it was skipped and why
+  - Confirm the deploy-together order is recorded for the release: migration `20261017000000`, then migration `20261017010000`, then both edge functions, then the frontend
+  - Ensure all tests pass, ask the user if questions arise

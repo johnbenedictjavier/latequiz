@@ -1,0 +1,280 @@
+{
+  "pbtResults": {
+    "1. Write bug condition exploration tests": {
+      "status": "passed",
+      "failingExample": "All 15 exploration tests FAIL on unfixed code as expected (bug confirmed).\n- Alternative key PBT: Counterexample [[[\"A\",\"B\"],1,\"b\",1]] (seed 1990589238) -> { is_correct: false, points_awarded: 0 }, expected { is_correct: true, points_awarded: 1 }.\n- Concrete: keys [\"Central Processing Unit\",\"CPU\"], answer \"cpu\" -> { is_correct: false, points_awarded: 0 } (originalGrade('cpu','Central Processing Unit') === false).\n- saveQuiz accepts key fields [\"  \"], [], [\"A\",\" \"], [\"RAM\",\" ram \"]: returns a quiz id with error null instead of a validation error.\n- Uploads: src/lib/submissionUploads.ts missing (Cannot find module) -> diagram.png not stored under S-1001/<attempt>/, PDF and 14 MB JPEG not rejected.\n- Legacy review: mapAnswer for file_path 'diagram.png' has filePath undefined, no legacy flag.\n- Re-upload eligibility PBT: src/lib/reuploads.ts missing (Cannot find module) -> canRequestReupload unavailable for (legacy name, submitted|expired|reviewed, [], now).\n- Admin drawer: mapped answer answerId undefined, no reupload slot.\n- Student discovery: loadStudentWorkspace never calls LQ_my_reupload_requests; no reuploadRequests field.\n- buildReuploadPath / submitReupload: module missing.",
+      "lastRunTimestamp": 1792165545318
+    },
+    "2. Write preservation property tests (BEFORE implementing fix)": {
+      "status": "passed",
+      "lastRunTimestamp": 1792166570685
+    }
+  },
+  "executionHistory": {
+    "1. Write bug condition exploration tests": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164334793
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164359559
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792165575547
+      }
+    ],
+    "2. Write preservation property tests (BEFORE implementing fix)": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164335293
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792165587483
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792166602497
+      }
+    ],
+    "3.1 Add the migration": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164335640
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792166612281
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792166865866
+      }
+    ],
+    "3.2 Create the shared answer keys module": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164336008
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792166871816
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792167207603
+      }
+    ],
+    "3.3 Update both grading edge functions": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164336561
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792167217065
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792167499314
+      }
+    ],
+    "3.4 Update types and admin quiz loading": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164336896
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792167508923
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792167928667
+      }
+    ],
+    "3.5 Update `saveQuiz` in `src/lib/admin.ts`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164337200
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792167935281
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792168255228
+      }
+    ],
+    "3.6 Update the quiz builder in `src/App.tsx`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164337531
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792168272454
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792168748034
+      }
+    ],
+    "3.7 Create `src/lib/submissionUploads.ts`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164337878
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792168758027
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792169068588
+      }
+    ],
+    "3.8 Wire uploads into the student quiz in `src/App.tsx`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164338175
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792169076596
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792169624405
+      }
+    ],
+    "3.9 Update submissions loading, review drawer, and deletion": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164338483
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792169635633
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792170165232
+      }
+    ],
+    "3.10 Add the re-upload migration": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164338848
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792170173717
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792170636648
+      }
+    ],
+    "3.11 Create `src/lib/reuploads.ts`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164339243
+      },
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792170648048
+      }
+    ],
+    "3.12 Update types and data loading for re-upload requests": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164339611
+      }
+    ],
+    "3.13 Add the student banner and re-upload page in `src/App.tsx`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164339899
+      }
+    ],
+    "3.14 Add admin re-upload controls, badge, and notification click-through in `src/App.tsx`": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164340214
+      }
+    ],
+    "3.15 Add the env-gated end-to-end suite": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164340545
+      }
+    ],
+    "3.16 Verify bug condition exploration test now passes": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164340890
+      }
+    ],
+    "3.17 Verify preservation tests still pass": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164341204
+      }
+    ],
+    "4. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792164341517
+      }
+    ]
+  }
+}

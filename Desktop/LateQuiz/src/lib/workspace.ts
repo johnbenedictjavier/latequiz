@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { sortStudents } from './sorting'
 import { signedAvatarUrl } from './profile'
+import { toKeyList } from '../../supabase/functions/_shared/answerKeys.ts'
 import type { Notification, PartScore, Question, Quiz, QuizPart, QuizReporter, ScoreRecord, Student, Subject } from '../types'
 
 type QuizRow = {
@@ -23,7 +24,6 @@ type QuestionRow = {
   prompt: string
   points: number
   options: string[] | null
-  answer_key?: string | null
   requires_manual_review: boolean
 }
 
@@ -87,10 +87,11 @@ function mapQuestion(row: QuestionRow): Question {
   }
 }
 
-function mapAdminQuestion(row: QuestionRow, answerKey?: string | null): Question {
+function mapAdminQuestion(row: QuestionRow, keys: string[] = []): Question {
   return {
     ...mapQuestion(row),
-    answer: answerKey ?? undefined,
+    answer: keys[0] ?? undefined,
+    ...(row.question_type === 'identification' ? { answers: [...keys] } : {}),
   }
 }
 
@@ -324,7 +325,7 @@ export async function loadAdminQuizzes() {
     supabase.from('LQ_questions').select('id, quiz_id, position, part_id, part_position, question_type, prompt, points, options, requires_manual_review').order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, position, title').order('position'),
     supabase.from('LQ_quiz_assignments').select('quiz_id, is_active'),
-    supabase.from('LQ_question_keys').select('question_id, answer_key'),
+    supabase.from('LQ_question_keys').select('question_id, answer_keys'),
     supabase.rpc('LQ_get_admin_quiz_reporters', { p_quiz_ids: null }),
   ])
 
@@ -335,7 +336,7 @@ export async function loadAdminQuizzes() {
   if (keyError) throw keyError
   if (reporterError) throw reporterError
 
-  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_key: string | null }>).map((row) => [row.question_id, row.answer_key]))
+  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_keys: string[] | null }>).map((row) => [row.question_id, toKeyList(row)]))
 
   const questionsByQuiz = new Map<string, Question[]>()
   for (const row of (questionRows ?? []) as QuestionRow[]) {

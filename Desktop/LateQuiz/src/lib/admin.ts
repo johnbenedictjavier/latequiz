@@ -1,5 +1,22 @@
 import { supabase } from './supabase'
+import { validateAnswerKeys } from '../../supabase/functions/_shared/answerKeys.ts'
 import type { Question, QuizPart, Student, TemporaryCredential } from '../types'
+
+/**
+ * The answer key fields for an identification question in admin order.
+ * Falls back to the single `answer` (e.g. PDF-imported questions) and to one
+ * empty field when nothing is set, so validation reports a blank key.
+ */
+export function identificationKeyFields(question: Pick<Question, 'answer' | 'answers'>): string[] {
+  return question.answers ?? (question.answer ? [question.answer] : [''])
+}
+
+/** `answer_keys` value stored in `LQ_question_keys` for a non-identification question. */
+function nonIdentificationKeys(question: Question): string[] | null {
+  const answer = question.answer?.trim() ?? ''
+  if (question.type === 'multiple-choice') return [answer]
+  return answer ? [answer] : null
+}
 
 export const DEFAULT_STUDENT_PASSWORD = 'LQ@Architect2026'
 
@@ -50,6 +67,21 @@ function fallbackParts(input: SaveQuizInput) {
 export async function saveQuiz(input: SaveQuizInput) {
   if (!supabase) return { id: null, error: new Error('Supabase is not configured.') }
 
+  const parts = fallbackParts(input)
+
+  // Validate identification keys before any write (defense in depth behind the builder check).
+  const validatedKeys = new Map<Question, string[]>()
+  for (const [partIndex, part] of parts.entries()) {
+    for (const [questionIndex, question] of part.questions.entries()) {
+      if (question.type !== 'identification') continue
+      const validation = validateAnswerKeys(identificationKeyFields(question))
+      if (!validation.ok) {
+        return { id: null, error: new Error(`Part ${partIndex + 1}, question ${questionIndex + 1}: ${validation.message}`) }
+      }
+      validatedKeys.set(question, validation.keys)
+    }
+  }
+
   const { data: userData, error: userError } = await supabase.auth.getUser()
   if (userError || !userData.user) return { id: null, error: userError ?? new Error('You must be signed in to save a quiz.') }
 
@@ -74,7 +106,6 @@ export async function saveQuiz(input: SaveQuizInput) {
     quizId = data.id as string
   }
 
-  const parts = fallbackParts(input)
   const { data: existingPartRows, error: existingPartError } = await supabase
     .from('LQ_quiz_parts')
     .select('id')
@@ -159,7 +190,9 @@ export async function saveQuiz(input: SaveQuizInput) {
       const persistedQuestionId = (result.data?.id as string | undefined) ?? question.id
       const { error: keyError } = await supabase.from('LQ_question_keys').upsert({
         question_id: persistedQuestionId,
-        answer_key: question.answer?.trim() || null,
+        answer_keys: question.type === 'identification'
+          ? validatedKeys.get(question) ?? []
+          : nonIdentificationKeys(question),
       }, { onConflict: 'question_id' })
       if (keyError) return { id: null, error: keyError }
     }

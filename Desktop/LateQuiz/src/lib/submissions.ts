@@ -1,5 +1,9 @@
 import { supabase } from './supabase'
 import { compareStudents } from './sorting'
+import { toKeyList } from '../../supabase/functions/_shared/answerKeys.ts'
+import { listAttemptObjectPaths, SUBMISSION_BUCKET } from './submissionUploads'
+import { collectDeletePaths } from './submissionReview'
+import { uploadDisplayName } from './uploadAnswer'
 import type { PartScore, QuestionType, Student, Submission, SubmissionAnswer, SubmissionPartColumn } from '../types'
 
 type AttemptRow = {
@@ -88,14 +92,15 @@ function mapPartScore(row: PartRow): PartScore {
   }
 }
 
-function mapAnswer(question: QuestionRow, answer?: AnswerRow, answerKey?: string | null): SubmissionAnswer {
+function mapAnswer(question: QuestionRow, answer?: AnswerRow, answerKeys: string[] = []): SubmissionAnswer {
   return {
     id: answer?.id,
     questionId: question.id,
     prompt: question.prompt,
     type: question.question_type,
-    answer: answer?.answer_text || answer?.file_path || '',
-    correctAnswer: answerKey ?? '',
+    answer: answer?.answer_text || uploadDisplayName(answer?.file_path),
+    correctAnswers: answerKeys,
+    filePath: answer?.file_path ?? null,
     points: Number(question.points),
     pointsAwarded: Number(answer?.points_awarded ?? 0),
     isCorrect: answer?.is_correct ?? null,
@@ -148,11 +153,11 @@ export async function loadAdminSubmissions() {
 
   const questionIds = (questionRows ?? []).map((question) => question.id)
   const { data: keyRows, error: keyError } = questionIds.length
-    ? await supabase.from('LQ_question_keys').select('question_id, answer_key').in('question_id', questionIds)
+    ? await supabase.from('LQ_question_keys').select('question_id, answer_keys').in('question_id', questionIds)
     : { data: [], error: null }
   if (keyError) throw keyError
 
-  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_key: string | null }>).map((row) => [row.question_id, row.answer_key]))
+  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_keys: string[] | null }>).map((row) => [row.question_id, toKeyList(row)]))
 
   const questionsByQuiz = new Map<string, QuestionRow[]>()
   for (const question of (questionRows ?? []) as QuestionRow[]) {
@@ -262,8 +267,29 @@ export async function reviewSubmission(submissionId: string, answers: Submission
   return { error }
 }
 
-export async function deleteSubmission(submissionId: string) {
+export const DELETE_STORAGE_WARNING = 'The submission was deleted, but some uploaded images could not be removed from storage.'
+
+/**
+ * Deletes an attempt through `LQ_delete_attempt` (rows + `submission_deleted` audit), then removes the
+ * attempt's uploaded objects. Paths are collected first because the answer rows cascade away. A failed
+ * delete touches no storage; a failed storage cleanup after a successful delete is only a warning.
+ */
+export async function deleteSubmission({ id, schoolId }: { id: string; schoolId: string }): Promise<{ error: { message: string } | null; warning?: string }> {
   if (!supabase) return { error: new Error('Supabase is not configured.') }
-  const { error } = await supabase.rpc('LQ_delete_attempt', { p_attempt_id: submissionId })
-  return { error }
+
+  const { data: answerRows, error: answerError } = await supabase.from('LQ_answers').select('file_path').eq('attempt_id', id)
+  if (answerError) return { error: answerError }
+  const listed = await listAttemptObjectPaths(schoolId, id)
+  const referenced = ((answerRows ?? []) as Array<{ file_path: string | null }>).map((row) => row.file_path)
+  const paths = collectDeletePaths(schoolId, id, referenced, listed.paths)
+
+  const { error } = await supabase.rpc('LQ_delete_attempt', { p_attempt_id: id })
+  if (error) return { error }
+
+  let cleanupFailed = Boolean(listed.error)
+  if (paths.length) {
+    const { error: removeError } = await supabase.storage.from(SUBMISSION_BUCKET).remove(paths)
+    if (removeError) cleanupFailed = true
+  }
+  return cleanupFailed ? { error: null, warning: DELETE_STORAGE_WARNING } : { error: null }
 }

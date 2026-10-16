@@ -15,7 +15,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx"
   },
-  "include": ["src"]
+  "include": ["src", "supabase/functions/_shared/answerKeys.ts"]
 }
