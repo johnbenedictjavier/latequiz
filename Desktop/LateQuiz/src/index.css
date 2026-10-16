@@ -198,6 +198,10 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 
 .button-primary:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 10px 20px rgba(81, 70, 217, 0.25); }
 
+.button-danger { border-color: #f0caca; color: #b94f52; background: #fff7f7; }
+
+.button-danger:hover { border-color: #e5a9ab; color: #9f3438; background: #fff0f0; }
+
 .button-secondary { border-color: #e4e7f0; color: #5f6984; background: #fff; box-shadow: 0 3px 10px rgba(37, 48, 90, 0.03); }
 
 .button-secondary:hover { border-color: #cfd3e5; color: var(--primary); background: #fbfbff; }
@@ -702,7 +706,8 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .roster-mini-card .mini-progress { margin-top: 2px; }
 .roster-mini-card .mini-progress span { background: var(--primary); }
 .admin-page-intro { align-items: center; }
-.roster-actions { display: flex; gap: 8px; }
+.roster-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.roster-actions .button { flex: 0 0 auto; }
 .filter-tabs { display: flex; align-items: center; gap: 5px; width: fit-content; padding: 4px; border-radius: 10px; background: #ebeef5; }
 .filter-tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 13px; border-radius: 7px; color: #8790a5; background: transparent; font-size: 11px; font-weight: 700; }
 .filter-tabs button.active { color: var(--primary); background: #fff; box-shadow: 0 3px 8px rgba(35, 46, 85, 0.06); }
@@ -888,7 +893,8 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .roster-table-head, .roster-row { display: grid; grid-template-columns: 31px minmax(170px, 1.35fr) minmax(100px, 0.8fr) 80px minmax(80px, 0.7fr); align-items: center; gap: 11px; min-width: 600px; padding: 0 22px; }
 .roster-table-head { min-height: 40px; color: #a0a7b7; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .roster-row { min-height: 58px; border-top: 1px solid #f0f1f5; }
-.roster-row-five { grid-template-columns: minmax(170px, 1.35fr) minmax(100px, 0.8fr) 120px 80px 115px; min-width: 680px; }
+.roster-row-five { grid-template-columns: minmax(190px, 1.35fr) minmax(100px, 0.8fr) 120px 80px minmax(280px, 1.2fr); min-width: 820px; }
+.roster-table-head { grid-template-columns: minmax(190px, 1.35fr) minmax(100px, 0.8fr) 120px 80px minmax(280px, 1.2fr); min-width: 820px; }
 .roster-name-button { justify-content: flex-start; width: 100%; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; }
 .roster-name-button:hover strong { color: var(--primary); }
 .roster-row.selected { background: #faf9ff; }

@@ -47,7 +47,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
-import { assignQuiz, DEFAULT_STUDENT_PASSWORD, deleteQuiz, loadQuizAssignments, loadQuizCollaborators, provisionStudentAccounts, resetStudentPassword, saveQuiz, saveStudent, setQuizStatus } from './lib/admin'
+import { assignQuiz, DEFAULT_STUDENT_PASSWORD, deleteQuiz, deleteStudent, loadQuizAssignments, loadQuizCollaborators, provisionStudentAccounts, resetStudentPassword, saveQuiz, saveStudent, setQuizStatus } from './lib/admin'
 import { saveAttemptAnswers, startAttempt, submitAttempt, type AttemptSubmissionResult } from './lib/attempts'
 import { changePassword, requestPasswordReset, signInWithAdminUsername, signInWithSchoolId, signOut } from './lib/auth'
 import { importQuizPdf } from './lib/pdfImport'
@@ -69,6 +69,10 @@ function newId(prefix: string) {
 
 function displayName(student: Student) {
   return `${student.firstNames} ${student.lastName}`.trim().split(' ').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+}
+
+function studentListName(student: Student) {
+  return [student.lastName.trim(), student.firstNames.trim()].filter(Boolean).join(', ')
 }
 
 function initials(student: Student) {
@@ -787,24 +791,158 @@ function BuilderQuestion({ question, index, isOpen, onToggle, onUpdate, onRemove
   return <div className={`builder-question ${isOpen ? 'open' : ''}`}><button className="builder-question-header" onClick={onToggle}><span className="builder-question-number">{String(index + 1).padStart(2, '0')}</span><span className="builder-question-title"><strong>{question.prompt || 'Untitled question'}</strong><span>{question.type} . {question.points} pts</span></span><ChevronDown size={17} className="builder-chevron" /></button>{isOpen && <div className="builder-question-body"><div className="question-editor-actions"><div className="question-type-row"><div><label className="field-label">Question type</label><div className="type-picker">{types.map((type) => <button key={type} className={question.type === type ? 'active' : ''} onClick={() => onUpdate({ type, requiresReview: type === 'essay' || type === 'upload', options: type === 'multiple-choice' ? question.options?.length ? question.options : ['', '', '', ''] : undefined })}>{type}</button>)}</div></div><div className="points-field"><label className="field-label">Points</label><input className="form-input" type="number" min="1" value={question.points} onChange={(event) => onUpdate({ points: Number(event.target.value) || 1 })} /></div></div><div className="question-reorder-actions"><button className="icon-button" onClick={onMoveUp} aria-label="Move question up"><ChevronUp size={15} /></button><button className="icon-button" onClick={onMoveDown} aria-label="Move question down"><ChevronDown size={15} /></button><button className="icon-button" onClick={onRemove} aria-label="Remove question"><X size={15} /></button></div></div><label className="field-label">Question prompt</label><textarea className="form-input" rows={3} value={question.prompt} onChange={(event) => onUpdate({ prompt: event.target.value })} placeholder="Write the question students will answer..." />{question.type === 'multiple-choice' && <div className="option-builder"><label className="field-label">Answer choices</label>{(question.options ?? ['', '', '', '']).map((option, optionIndex) => <div className="builder-option" key={optionIndex}><input className="form-input" value={option} onChange={(event) => onUpdate({ options: (question.options ?? ['', '', '', '']).map((item, index) => index === optionIndex ? event.target.value : item) })} placeholder={`Choice ${String.fromCharCode(65 + optionIndex)}`} /><button className={`correct-toggle ${question.answer === option && option ? 'correct' : ''}`} onClick={() => onUpdate({ answer: option })} aria-label="Mark correct answer">{question.answer === option ? <Check size={13} /> : String.fromCharCode(65 + optionIndex)}</button></div>)}</div>}{question.type === 'identification' && <div><label className="field-label">Answer key</label><input className="form-input" value={question.answer ?? ''} onChange={(event) => onUpdate({ answer: event.target.value })} /></div>}{question.requiresReview && <div className="manual-review-note"><CircleAlert size={15} /> This response will be reviewed manually.</div>}</div>}</div>
 }
 
+type PendingStudentUpdate = {
+  student: Student
+  originalSchoolId: string
+}
+
 function AdminStudentsPage({ focusStudentId, notify }: { focusStudentId: string | null; notify: (toast: ToastMessage) => void }) {
   const [students, setStudents] = useState<Student[]>([])
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Student | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<PendingStudentUpdate | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<Student | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const refresh = async () => { try { setStudents(await loadAdminRoster()) } catch (error) { notify({ tone: 'warning', title: 'Students could not load', message: (error as Error).message }) } }
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const refresh = async () => {
+    try {
+      setStudents(await loadAdminRoster())
+    } catch (error) {
+      notify({ tone: 'warning', title: 'Students could not load', message: (error as Error).message })
+    }
+  }
+
   useEffect(() => { void refresh() }, [])
   useEffect(() => { if (focusStudentId) setSearch(focusStudentId) }, [focusStudentId])
+
   const filtered = sortStudents(students.filter((student) => `${student.schoolId} ${student.firstNames} ${student.lastName}`.toLowerCase().includes(search.toLowerCase())))
-  const save = async (student: Student) => { setIsSaving(true); const result = await saveStudent(student, editing?.schoolId); setIsSaving(false); if (result.error) return notify({ tone: 'warning', title: 'Student could not be saved', message: result.error.message }); notify({ tone: 'success', title: editing ? 'Student updated' : 'Student added', message: editing ? 'The roster record is up to date.' : `The default password is ${DEFAULT_STUDENT_PASSWORD}.` }); setEditing(null); await refresh() }
-  const reset = async (student: Student) => { const result = await resetStudentPassword(student.schoolId); if (result.error) return notify({ tone: 'warning', title: 'Password reset failed', message: result.error.message }); notify({ tone: 'success', title: 'Password reset', message: `${displayName(student)} can sign in with the default password.` }); await refresh() }
-  return <div className="content-stack"><section className="page-intro-row admin-page-intro"><div><span className="eyebrow">Roster and access</span><h2>Manage students.</h2><p>Add or edit roster records, then reset a password when a student requests help.</p></div><button className="button button-primary" onClick={() => setEditing({ schoolId: '', firstNames: '', lastName: '', active: true })}><Plus size={17} /> Add student</button></section><section className="table-card roster-table-card"><div className="table-card-heading"><div><span className="eyebrow">Verified roster</span><h3>{students.length} students</h3></div><div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search school ID or name" /></div></div><div className="roster-table"><div className="roster-table-head"><span>Student</span><span>School ID</span><span>Account</span><span>Assignments</span><span /></div>{filtered.map((student) => <div className="roster-row roster-row-five" key={student.schoolId}><button className="roster-student roster-name-button" onClick={() => setEditing(student)}><StudentAvatar student={student} className="avatar avatar-tiny avatar-mint" /><strong>{displayName(student)}</strong></button><span className="school-id-text">{student.schoolId}</span><span className="assignment-count">{student.accountReady ? student.mustChangePassword ? 'Change required' : 'Ready' : 'Missing account'}</span><span className="assignment-count">{student.assignmentCount ?? 0}</span><button className="button button-small button-secondary" onClick={() => void reset(student)}>Reset password</button></div>)}{!filtered.length && <div className="empty-state"><UsersRound size={24} /><strong>No students found</strong><span>Try another search or add a student.</span></div>}</div></section>{editing && <StudentModal student={editing} isSaving={isSaving} isNew={!students.some((item) => item.schoolId === editing.schoolId)} onClose={() => setEditing(null)} onSave={save} onReset={() => void reset(editing)} />}</div>
+  const isExistingStudent = (student: Student) => students.some((item) => item.schoolId === student.schoolId)
+
+  const persistSave = async (student: Student, originalSchoolId?: string) => {
+    setIsSaving(true)
+    try {
+      const result = await saveStudent(student, originalSchoolId)
+      if (result.error) {
+        notify({ tone: 'warning', title: 'Student could not be saved', message: result.error.message })
+        return false
+      }
+      const isUpdate = Boolean(originalSchoolId)
+      notify({
+        tone: 'success',
+        title: isUpdate ? 'Student updated' : 'Student added',
+        message: isUpdate
+          ? 'The roster record is up to date.'
+          : student.active === false
+            ? 'The roster record was added as inactive.'
+            : `The default password is ${DEFAULT_STUDENT_PASSWORD}.`,
+      })
+      setEditing(null)
+      await refresh()
+      return true
+    } catch (error) {
+      notify({ tone: 'warning', title: 'Student could not be saved', message: (error as Error).message })
+      return false
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const requestSave = async (student: Student) => {
+    if (editing && isExistingStudent(editing)) {
+      setPendingUpdate({ student, originalSchoolId: editing.schoolId })
+      return
+    }
+    await persistSave(student)
+  }
+
+  const confirmUpdate = async () => {
+    if (!pendingUpdate || isSaving) return
+    const saved = await persistSave(pendingUpdate.student, pendingUpdate.originalSchoolId)
+    if (saved) setPendingUpdate(null)
+  }
+
+  const reset = async (student: Student) => {
+    try {
+      const result = await resetStudentPassword(student.schoolId)
+      if (result.error) {
+        notify({ tone: 'warning', title: 'Password reset failed', message: result.error.message })
+        return
+      }
+      notify({ tone: 'success', title: 'Password reset', message: `${studentListName(student)} can sign in with the default password.` })
+      await refresh()
+    } catch (error) {
+      notify({ tone: 'warning', title: 'Password reset failed', message: (error as Error).message })
+    }
+  }
+
+  const remove = async () => {
+    if (!pendingDelete || isDeleting) return
+    setIsDeleting(true)
+    try {
+      const result = await deleteStudent(pendingDelete.schoolId)
+      if (result.error) {
+        notify({ tone: 'warning', title: 'Student could not be deleted', message: result.error.message })
+        return
+      }
+      if (!result.result) {
+        notify({ tone: 'warning', title: 'Student could not be deleted', message: 'The server did not return a deletion result.' })
+        return
+      }
+      setPendingDelete(null)
+      if (result.warning) {
+        notify({ tone: 'warning', title: 'Student removed with warning', message: result.warning })
+      } else if (result.result === 'deactivated') {
+        notify({ tone: 'success', title: 'Student deactivated', message: 'Quiz history was preserved and account access was disabled.' })
+      } else {
+        notify({ tone: 'success', title: 'Student deleted', message: `${studentListName(pendingDelete)} was removed from the roster.` })
+      }
+      await refresh()
+    } catch (error) {
+      notify({ tone: 'warning', title: 'Student could not be deleted', message: (error as Error).message })
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  return <div className="content-stack">
+    <section className="page-intro-row admin-page-intro">
+      <div><span className="eyebrow">Roster and access</span><h2>Manage students.</h2><p>Add or edit roster records, then reset a password when a student requests help.</p></div>
+      <button className="button button-primary" onClick={() => setEditing({ schoolId: '', firstNames: '', lastName: '', active: true })}><Plus size={17} /> Add student</button>
+    </section>
+    <section className="table-card roster-table-card">
+      <div className="table-card-heading"><div><span className="eyebrow">Verified roster</span><h3>{students.length} students</h3></div><div className="search-wrap"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search school ID or name" /></div></div>
+      <div className="roster-table">
+        <div className="roster-table-head"><span>Student</span><span>School ID</span><span>Account</span><span>Assignments</span><span>Actions</span></div>
+        {filtered.map((student) => <div className="roster-row roster-row-five" key={student.schoolId}>
+          <button className="roster-student roster-name-button" onClick={() => setEditing(student)}><StudentAvatar student={student} className="avatar avatar-tiny avatar-mint" /><strong>{studentListName(student)}</strong></button>
+          <span className="school-id-text">{student.schoolId}</span>
+          <span className="assignment-count">{student.active === false ? 'Inactive' : student.accountReady ? student.mustChangePassword ? 'Change required' : 'Ready' : 'Missing account'}</span>
+          <span className="assignment-count">{student.assignmentCount ?? 0}</span>
+          <div className="roster-actions">
+            <button className="button button-small button-secondary" disabled={isDeleting} onClick={() => setEditing(student)}><Pencil size={13} /> Edit</button>
+            <button className="button button-small button-secondary" disabled={isDeleting} onClick={() => void reset(student)}><ShieldCheck size={13} /> Reset</button>
+            <button className="button button-small button-danger" disabled={isDeleting} onClick={() => setPendingDelete(student)}><Trash2 size={13} /> Delete</button>
+          </div>
+        </div>)}
+        {!filtered.length && <div className="empty-state"><UsersRound size={24} /><strong>No students found</strong><span>Try another search or add a student.</span></div>}
+      </div>
+    </section>
+    {editing && <StudentModal student={editing} isSaving={isSaving} isNew={!isExistingStudent(editing)} onClose={() => setEditing(null)} onSave={requestSave} onReset={() => void reset(editing)} />}
+    {pendingUpdate && <ConfirmModal title={`Update ${studentListName(pendingUpdate.student)}?`} message="These changes will be saved to the student roster and may affect account access." confirmLabel="Save changes" busyLabel="Saving..." isBusy={isSaving} onCancel={() => setPendingUpdate(null)} onConfirm={() => void confirmUpdate()} />}
+    {pendingDelete && <ConfirmModal title={`Delete ${studentListName(pendingDelete)}?`} message="This removes the student from the roster. Students with quiz history will be deactivated instead so their submissions and scores remain preserved." confirmLabel="Delete student" busyLabel="Deleting..." confirmTone="danger" isBusy={isDeleting} onCancel={() => setPendingDelete(null)} onConfirm={() => void remove()} />}
+  </div>
 }
 
 function StudentModal({ student, isNew, isSaving, onClose, onSave, onReset }: { student: Student; isNew: boolean; isSaving: boolean; onClose: () => void; onSave: (student: Student) => Promise<void>; onReset: () => void }) {
   const [value, setValue] = useState(student)
-  const submit = (event: FormEvent) => { event.preventDefault(); void onSave(value) }
-  return <div className="modal-overlay" onClick={onClose}><section className="student-modal" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">{isNew ? 'Add student' : 'Student account'}</span><h2>{isNew ? 'Create roster record' : displayName(student)}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close student form"><X size={18} /></button></div><form className="settings-fields" onSubmit={submit}><div><label className="field-label">School ID</label><input className="form-input" value={value.schoolId} disabled={!isNew} onChange={(event) => setValue({ ...value, schoolId: event.target.value })} placeholder="24-00000" /></div><div className="two-field-grid"><div><label className="field-label">First and middle names</label><input className="form-input" value={value.firstNames} onChange={(event) => setValue({ ...value, firstNames: event.target.value })} /></div><div><label className="field-label">Last name</label><input className="form-input" value={value.lastName} onChange={(event) => setValue({ ...value, lastName: event.target.value })} /></div></div><label className="check-row"><input type="checkbox" checked={value.active !== false} onChange={(event) => setValue({ ...value, active: event.target.checked })} /><span className="custom-check"><Check size={12} /></span><span>Account is active</span></label><div className="info-callout"><ShieldCheck size={17} /><span>{isNew ? `New accounts start with ${DEFAULT_STUDENT_PASSWORD} and must change it after first login.` : 'Resetting a password restores the default password and requires a change at next login.'}</span></div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button>{!isNew && <button type="button" className="button button-secondary" onClick={onReset}>Reset password</button>}<button type="submit" className="button button-primary" disabled={isSaving}>{isSaving ? 'Saving...' : isNew ? 'Add student' : 'Save changes'} <Check size={15} /></button></div></form></section></div>
+  const submit = (event: FormEvent) => { event.preventDefault(); if (!isSaving) void onSave(value) }
+  const accountMessage = isNew
+    ? value.active === false
+      ? 'Inactive students will not receive a login account until they are activated.'
+      : `New accounts start with ${DEFAULT_STUDENT_PASSWORD} and must change it after first login.`
+    : 'Resetting a password restores the default password and requires a change at next login.'
+  return <div className="modal-overlay" onClick={() => { if (!isSaving) onClose() }}><section className="student-modal" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">{isNew ? 'Add student' : 'Student account'}</span><h2>{isNew ? 'Create roster record' : studentListName(student)}</h2></div><button type="button" className="icon-button" disabled={isSaving} onClick={onClose} aria-label="Close student form"><X size={18} /></button></div><form className="settings-fields" onSubmit={submit}><div><label className="field-label">School ID</label><input className="form-input" value={value.schoolId} disabled={!isNew} onChange={(event) => setValue({ ...value, schoolId: event.target.value })} placeholder="24-00000" /></div><div className="two-field-grid"><div><label className="field-label">First and middle names</label><input className="form-input" value={value.firstNames} onChange={(event) => setValue({ ...value, firstNames: event.target.value })} /></div><div><label className="field-label">Last name</label><input className="form-input" value={value.lastName} onChange={(event) => setValue({ ...value, lastName: event.target.value })} /></div></div><label className="check-row"><input type="checkbox" checked={value.active !== false} onChange={(event) => setValue({ ...value, active: event.target.checked })} /><span className="custom-check"><Check size={12} /></span><span>Account is active</span></label><div className="info-callout"><ShieldCheck size={17} /><span>{accountMessage}</span></div><div className="modal-actions"><button type="button" className="button button-secondary" disabled={isSaving} onClick={onClose}>Cancel</button>{!isNew && <button type="button" className="button button-secondary" disabled={isSaving} onClick={onReset}>Reset password</button>}<button type="submit" className="button button-primary" disabled={isSaving}>{isSaving ? 'Saving...' : isNew ? 'Add student' : 'Save changes'} <Check size={15} /></button></div></form></section></div>
 }
 
 function submissionStatusLabel(status: Submission['status']) {
@@ -1108,16 +1246,17 @@ function AvatarStack({ people, label }: { people: Array<Student | QuizReporter>;
   return <div className="avatar-stack" role="img" aria-label={label}>{visible.map((person, index) => <StudentAvatar key={`${person.schoolId}-${index}`} student={person} className="avatar avatar-tiny avatar-mint avatar-stack-item" />)}{people.length > visible.length && <span className="avatar avatar-tiny avatar-more avatar-stack-item">+{people.length - visible.length}</span>}</div>
 }
 
-function ConfirmModal({ title, message, confirmLabel, onCancel, onConfirm }: { title: string; message: string; confirmLabel: string; onCancel: () => void; onConfirm: () => void }) {
+function ConfirmModal({ title, message, confirmLabel, busyLabel = 'Working...', confirmTone = 'primary', isBusy = false, onCancel, onConfirm }: { title: string; message: string; confirmLabel: string; busyLabel?: string; confirmTone?: 'primary' | 'danger'; isBusy?: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const cancel = () => { if (!isBusy) onCancel() }
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
+      if (event.key === 'Escape') cancel()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onCancel])
+  }, [isBusy, onCancel])
 
-  return <div className="modal-overlay" role="presentation" onClick={onCancel}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(event) => event.stopPropagation()}><div className="modal-icon confirm-icon"><CircleAlert size={21} /></div><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Please confirm</span><h2 id="confirm-title">{title}</h2><p>{message}</p></div><button className="icon-button" onClick={onCancel} aria-label="Close confirmation"><X size={18} /></button></div><div className="modal-actions"><button className="button button-secondary" onClick={onCancel}>Cancel</button><button className="button button-primary" onClick={onConfirm}>{confirmLabel}</button></div></section></div>
+  return <div className="modal-overlay" role="presentation" onClick={cancel}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(event) => event.stopPropagation()}><div className="modal-icon confirm-icon"><CircleAlert size={21} /></div><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Please confirm</span><h2 id="confirm-title">{title}</h2><p>{message}</p></div><button className="icon-button" disabled={isBusy} onClick={cancel} aria-label="Close confirmation"><X size={18} /></button></div><div className="modal-actions"><button className="button button-secondary" disabled={isBusy} onClick={cancel}>Cancel</button><button className={`button ${confirmTone === 'danger' ? 'button-danger' : 'button-primary'}`} disabled={isBusy} onClick={onConfirm}>{isBusy && <LoaderCircle className="spin" size={15} />}{isBusy ? busyLabel : confirmLabel}</button></div></section></div>
 }
 
 function AuthScreen({ route, onNavigate, onLogin, notify }: { route: AuthRoute; onNavigate: (route: AuthRoute) => void; onLogin: (role: Role, student?: Student, mustChangePassword?: boolean) => void; notify: (toast: ToastMessage) => void }) {

@@ -226,23 +226,45 @@ export async function setQuizStatus(quizId: string, status: 'draft' | 'published
 export async function saveStudent(student: Student, originalSchoolId?: string) {
   if (!supabase) return { error: new Error('Supabase is not configured.') }
   const schoolId = student.schoolId.trim().toUpperCase()
+  const lastName = student.lastName.trim()
+  const firstNames = student.firstNames.trim()
+  if (!/^\d{2}-\d{5}$/.test(schoolId)) return { error: new Error('Use a valid school ID in the format 24-00000.') }
+  if (!lastName || !firstNames) return { error: new Error('First names and last name are required.') }
   const payload = {
     school_id: schoolId,
-    last_name: student.lastName.trim(),
-    first_names: student.firstNames.trim(),
+    last_name: lastName,
+    first_names: firstNames,
     is_active: student.active ?? true,
   }
-  const query = originalSchoolId
-    ? supabase.from('LQ_student_roster').update(payload).eq('school_id', originalSchoolId)
-    : supabase.from('LQ_student_roster').insert(payload)
-  const { error } = await query
-  if (error) return { error }
+  if (originalSchoolId) {
+    const { data, error } = await supabase
+      .from('LQ_student_roster')
+      .update(payload)
+      .eq('school_id', originalSchoolId.trim().toUpperCase())
+      .select('school_id')
+      .maybeSingle()
+    if (error) return { error }
+    if (!data) return { error: new Error('The student record no longer exists.') }
+  } else {
+    const { error } = await supabase.from('LQ_student_roster').insert(payload)
+    if (error) return { error }
+  }
 
-  if (!originalSchoolId) {
+  if ((!originalSchoolId && payload.is_active) || (originalSchoolId && payload.is_active && student.accountReady === false)) {
     const provisioned = await provisionStudentAccounts([{ ...student, schoolId }])
     if (provisioned.error) return { error: provisioned.error }
   }
   return { error: null }
+}
+
+export async function deleteStudent(schoolId: string) {
+  if (!supabase) return { result: null as 'deleted' | 'deactivated' | null, warning: undefined as string | undefined, error: new Error('Supabase is not configured.') }
+  const { data, error } = await supabase.functions.invoke('delete-student', { body: { schoolId } })
+  return {
+    result: (data?.result ?? null) as 'deleted' | 'deactivated' | null,
+    warning: typeof data?.warning === 'string' ? data.warning : undefined,
+    error,
+  }
 }
 
 export async function resetStudentPassword(schoolId: string) {

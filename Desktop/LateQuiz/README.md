@@ -19,7 +19,7 @@ Open `/login` for students. Administrators use the Admin login switch on the sam
 2. Add the Supabase URL and publishable key.
 3. Apply all migrations in `supabase/migrations/`.
 4. Run `supabase/seed.sql` to load the initial school-ID roster.
-5. Deploy `supabase/functions/provision-students`, `supabase/functions/reset-student-password`, `supabase/functions/request-student-password-reset`, and `supabase/functions/submit-attempt`.
+5. Deploy `supabase/functions/provision-students`, `supabase/functions/reset-student-password`, `supabase/functions/delete-student`, `supabase/functions/request-student-password-reset`, and `supabase/functions/submit-attempt`.
 6. Create the administrator in Supabase Auth using the internal identifier `admin@auth.latequiz.internal`.
 7. Add that user to `LQ_profiles` with `role = 'admin'`.
 
