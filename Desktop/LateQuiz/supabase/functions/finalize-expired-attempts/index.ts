@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { matchesAnyKey, toKeyList } from '../_shared/answerKeys.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,10 +11,6 @@ function response(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
-}
-
-function normalize(value: string | null | undefined) {
-  return (value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
 async function finalizeAttempt(serviceClient: ReturnType<typeof createClient>, attempt: {
@@ -34,7 +31,7 @@ async function finalizeAttempt(serviceClient: ReturnType<typeof createClient>, a
 
   const questionIds = (questions ?? []).map((question) => question.id)
   const { data: keyRows, error: keyError } = questionIds.length
-    ? await serviceClient.from('LQ_question_keys').select('question_id, answer_key').in('question_id', questionIds)
+    ? await serviceClient.from('LQ_question_keys').select('question_id, answer_keys').in('question_id', questionIds)
     : { data: [], error: null }
   if (keyError) throw keyError
 
@@ -43,7 +40,7 @@ async function finalizeAttempt(serviceClient: ReturnType<typeof createClient>, a
   let manualReview = false
   let manualItems = 0
   const answerByQuestion = new Map((answers ?? []).map((answer) => [answer.question_id, answer]))
-  const keyByQuestion = new Map((keyRows ?? []).map((key) => [key.question_id, key.answer_key]))
+  const keysByQuestion = new Map<string, string[]>((keyRows ?? []).map((key) => [key.question_id, toKeyList(key)]))
   const partById = new Map((parts ?? []).map((part) => [part.id, part]))
   const partStats = new Map<string, { partId: string | null; title: string; position: number; possible: number; awarded: number; pending: boolean }>()
 
@@ -71,7 +68,7 @@ async function finalizeAttempt(serviceClient: ReturnType<typeof createClient>, a
       continue
     }
 
-    const correct = hasResponse && normalize(answer?.answer_text) === normalize(keyByQuestion.get(question.id))
+    const correct = hasResponse && matchesAnyKey(answer?.answer_text, keysByQuestion.get(question.id) ?? [])
     if (correct) {
       awarded += points
       stats.awarded += points

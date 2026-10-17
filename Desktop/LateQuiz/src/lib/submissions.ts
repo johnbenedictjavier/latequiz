@@ -1,6 +1,11 @@
 import { supabase } from './supabase'
 import { compareStudents } from './sorting'
-import type { PartScore, QuestionType, Student, Submission, SubmissionAnswer, SubmissionPartColumn } from '../types'
+import { toKeyList } from '../../supabase/functions/_shared/answerKeys.ts'
+import { listAttemptObjectPaths, SUBMISSION_BUCKET } from './submissionUploads'
+import { collectDeletePaths } from './submissionReview'
+import { effectiveReuploadStatus, isAwaitingImageReview, mapReuploadRequestRow } from './reuploads'
+import { uploadDisplayName } from './uploadAnswer'
+import type { AttemptStatus, PartScore, QuestionType, ReuploadRequestRecord, Student, Submission, SubmissionAnswer, SubmissionPartColumn, SubmissionReupload } from '../types'
 
 type AttemptRow = {
   id: string
@@ -42,6 +47,22 @@ type AnswerRow = {
   file_path: string | null
   is_correct: boolean | null
   points_awarded: number
+  reviewed_at: string | null
+}
+
+type ReuploadRequestRow = {
+  id: string
+  attempt_id: string
+  question_id: string
+  answer_id: string
+  original_file_name: string | null
+  requested_at: string
+  deadline: string | null
+  status: 'open' | 'fulfilled' | 'cancelled'
+  fulfilled_at: string | null
+  fulfilled_path: string | null
+  cancelled_at: string | null
+  cancel_reason: 'admin' | 'expired' | null
 }
 
 type PartRow = {
@@ -88,18 +109,41 @@ function mapPartScore(row: PartRow): PartScore {
   }
 }
 
-function mapAnswer(question: QuestionRow, answer?: AnswerRow, answerKey?: string | null): SubmissionAnswer {
+/** Maps the latest re-upload request for an answer into the drawer's slot. */
+function mapReupload(answer: AnswerRow | undefined, latest: ReuploadRequestRecord | undefined, now: Date): SubmissionReupload | null {
+  if (!latest) return null
+  return {
+    id: latest.id,
+    status: effectiveReuploadStatus(latest, now),
+    deadline: latest.deadline,
+    requestedAt: latest.requestedAt,
+    fulfilledAt: latest.fulfilledAt,
+    originalFileName: latest.originalFileName,
+    awaitingReview: isAwaitingImageReview({ reviewedAt: answer?.reviewed_at ?? null }, latest),
+  }
+}
+
+function mapAnswer(
+  question: QuestionRow,
+  answer: AnswerRow | undefined,
+  answerKeys: string[] = [],
+  latestRequest?: ReuploadRequestRecord,
+  now: Date = new Date(),
+): SubmissionAnswer {
   return {
     id: answer?.id,
     questionId: question.id,
     prompt: question.prompt,
     type: question.question_type,
-    answer: answer?.answer_text || answer?.file_path || '',
-    correctAnswer: answerKey ?? '',
+    answer: answer?.answer_text || uploadDisplayName(answer?.file_path),
+    correctAnswers: answerKeys,
+    filePath: answer?.file_path ?? null,
     points: Number(question.points),
     pointsAwarded: Number(answer?.points_awarded ?? 0),
     isCorrect: answer?.is_correct ?? null,
     requiresReview: question.requires_manual_review || question.question_type === 'essay' || question.question_type === 'upload',
+    answerId: answer?.id,
+    reupload: mapReupload(answer, latestRequest, now),
   }
 }
 
@@ -136,7 +180,7 @@ export async function loadAdminSubmissions() {
      { data: quizPartRows, error: quizPartError },
   ] = await Promise.all([
     supabase.from('LQ_questions').select('id, quiz_id, position, part_id, question_type, prompt, points, requires_manual_review').in('quiz_id', quizIds),
-    supabase.from('LQ_answers').select('id, attempt_id, question_id, answer_text, file_path, is_correct, points_awarded').in('attempt_id', attemptIds),
+    supabase.from('LQ_answers').select('id, attempt_id, question_id, answer_text, file_path, is_correct, points_awarded, reviewed_at').in('attempt_id', attemptIds),
     supabase.from('LQ_attempt_part_scores').select('attempt_id, part_id, part_title, position, points_possible, auto_points, final_points').in('attempt_id', attemptIds).order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, title, position').in('quiz_id', quizIds).order('position'),
   ])
@@ -148,11 +192,26 @@ export async function loadAdminSubmissions() {
 
   const questionIds = (questionRows ?? []).map((question) => question.id)
   const { data: keyRows, error: keyError } = questionIds.length
-    ? await supabase.from('LQ_question_keys').select('question_id, answer_key').in('question_id', questionIds)
+    ? await supabase.from('LQ_question_keys').select('question_id, answer_keys').in('question_id', questionIds)
     : { data: [], error: null }
   if (keyError) throw keyError
 
-  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_key: string | null }>).map((row) => [row.question_id, row.answer_key]))
+  const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_keys: string[] | null }>).map((row) => [row.question_id, toKeyList(row)]))
+
+  const { data: reuploadRows, error: reuploadError } = await supabase
+    .from('LQ_reupload_requests')
+    .select('id, attempt_id, question_id, answer_id, original_file_name, requested_at, deadline, status, fulfilled_at, fulfilled_path, cancelled_at, cancel_reason')
+    .in('attempt_id', attemptIds)
+    .order('requested_at', { ascending: true })
+  if (reuploadError) throw reuploadError
+
+  // Latest request per answer (rows arrive oldest-first, so the last write wins).
+  const latestRequestByAnswer = new Map<string, ReuploadRequestRecord>()
+  for (const row of (reuploadRows ?? []) as ReuploadRequestRow[]) {
+    latestRequestByAnswer.set(row.answer_id, mapReuploadRequestRow(row))
+  }
+
+  const now = new Date()
 
   const questionsByQuiz = new Map<string, QuestionRow[]>()
   for (const question of (questionRows ?? []) as QuestionRow[]) {
@@ -199,7 +258,12 @@ export async function loadAdminSubmissions() {
     const roster = rosters.get(attempt.school_id)
     const questions = questionsByQuiz.get(attempt.quiz_id) ?? []
     const answers = answersByAttempt.get(attempt.id) ?? new Map<string, AnswerRow>()
-    const mappedAnswers = questions.map((question) => mapAnswer(question, answers.get(question.id), answerKeys.get(question.id)))
+    const mappedAnswers = questions.map((question) => {
+      const answer = answers.get(question.id)
+      const latestRequest = answer?.id ? latestRequestByAnswer.get(answer.id) : undefined
+      return mapAnswer(question, answer, answerKeys.get(question.id), latestRequest, now)
+    })
+    const hasImageAwaitingReview = mappedAnswers.some((answer) => answer.reupload?.awaitingReview === true)
     const parts = partsByAttempt.get(attempt.id) ?? []
     const partColumns = [...(partColumnsByQuiz.get(attempt.quiz_id) ?? [])]
     const questionPartIds = new Set(questions.map((question) => question.part_id ?? '__general'))
@@ -242,6 +306,8 @@ export async function loadAdminSubmissions() {
       possiblePoints,
       timeTakenSeconds: attempt.time_taken_seconds === null || attempt.time_taken_seconds === undefined ? null : Number(attempt.time_taken_seconds),
       submissionReason: attempt.submission_reason,
+      attemptStatus: attempt.status as AttemptStatus,
+      hasImageAwaitingReview,
       answers: mappedAnswers,
       partColumns,
       parts,
@@ -262,8 +328,29 @@ export async function reviewSubmission(submissionId: string, answers: Submission
   return { error }
 }
 
-export async function deleteSubmission(submissionId: string) {
+export const DELETE_STORAGE_WARNING = 'The submission was deleted, but some uploaded images could not be removed from storage.'
+
+/**
+ * Deletes an attempt through `LQ_delete_attempt` (rows + `submission_deleted` audit), then removes the
+ * attempt's uploaded objects. Paths are collected first because the answer rows cascade away. A failed
+ * delete touches no storage; a failed storage cleanup after a successful delete is only a warning.
+ */
+export async function deleteSubmission({ id, schoolId }: { id: string; schoolId: string }): Promise<{ error: { message: string } | null; warning?: string }> {
   if (!supabase) return { error: new Error('Supabase is not configured.') }
-  const { error } = await supabase.rpc('LQ_delete_attempt', { p_attempt_id: submissionId })
-  return { error }
+
+  const { data: answerRows, error: answerError } = await supabase.from('LQ_answers').select('file_path').eq('attempt_id', id)
+  if (answerError) return { error: answerError }
+  const listed = await listAttemptObjectPaths(schoolId, id)
+  const referenced = ((answerRows ?? []) as Array<{ file_path: string | null }>).map((row) => row.file_path)
+  const paths = collectDeletePaths(schoolId, id, referenced, listed.paths)
+
+  const { error } = await supabase.rpc('LQ_delete_attempt', { p_attempt_id: id })
+  if (error) return { error }
+
+  let cleanupFailed = Boolean(listed.error)
+  if (paths.length) {
+    const { error: removeError } = await supabase.storage.from(SUBMISSION_BUCKET).remove(paths)
+    if (removeError) cleanupFailed = true
+  }
+  return cleanupFailed ? { error: null, warning: DELETE_STORAGE_WARNING } : { error: null }
 }

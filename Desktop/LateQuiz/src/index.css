@@ -536,6 +536,11 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .uploaded-file strong, .submitted-attachment strong { overflow: hidden; color: #527260; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .uploaded-file span:not(.file-icon), .submitted-attachment span:not(.file-icon) { color: #91a89a; font-size: 9px; }
 .uploaded-file .icon-button { margin-left: auto; }
+.uploaded-file-legacy { border-color: #f1dfb8; background: #fffaf0; }
+.uploaded-file-legacy span:not(.file-icon) { color: #8a6d2f; line-height: 1.4; }
+.upload-status, .upload-error { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 11px; }
+.upload-status { color: #737d96; }
+.upload-error { color: #b4232c; }
 .question-footer { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 54px; padding-top: 19px; border-top: 1px solid #eff0f5; }
 .question-nav-buttons { display: flex; align-items: center; gap: 8px; }
 .previous-button { border: 1px solid #e3e6ef; }
@@ -795,6 +800,8 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .option-builder .field-label span { margin-left: 6px; color: #a3aaba; font-size: 9px; font-weight: 500; }
 .builder-option { display: flex; align-items: center; gap: 8px; }
 .builder-option .form-input { flex: 1; }
+.answer-key-builder .icon-button:disabled { opacity: 0.35; }
+.answer-key-builder .answer-key-add { align-self: flex-start; }
 .correct-toggle { display: flex; align-items: center; justify-content: center; width: 27px; height: 27px; border: 1px solid #dfe2eb; border-radius: 7px; color: #9da4b4; background: #fff; font-size: 9px; font-weight: 700; }
 .correct-toggle.correct { border-color: #a7dcc1; color: #fff; background: var(--green); }
 .manual-review-note { display: flex; align-items: center; gap: 7px; margin-top: 5px; padding: 10px; border-radius: 8px; color: #7e87a0; background: #f7f7fb; font-size: 10px; }
@@ -1414,3 +1421,53 @@ h1, h2, h3 { letter-spacing: -0.035em; }
   .recent-submission-copy { flex-basis: calc(100% - 50px); }
   .recent-submission-score { width: 100%; align-items: flex-start; padding-left: 49px; }
 }
+
+/* Student re-upload banner and page (task 3.13) */
+.reupload-banner { padding: 16px 18px; border: 1px solid #f1dfb8; border-radius: 13px; background: #fffaf0; box-shadow: var(--shadow-sm); }
+.reupload-banner-head { display: flex; align-items: center; gap: 12px; margin-bottom: 13px; }
+.reupload-banner-head > div { display: flex; flex-direction: column; gap: 3px; }
+.reupload-banner-head h3 { color: #7a5c18; font-size: 15px; }
+.reupload-banner-head .eyebrow { color: #a98a3f; }
+.reupload-banner-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: 0 0 auto; border-radius: 11px; color: #a9792a; background: #faeccb; }
+.reupload-banner-list { display: flex; flex-direction: column; gap: 9px; list-style: none; margin: 0; padding: 0; }
+.reupload-banner-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; border: 1px solid #f0e2c0; border-radius: 10px; background: #fff; }
+.reupload-banner-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.reupload-banner-copy strong { color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+.reupload-banner-copy span { color: #8a7a52; font-size: 11px; }
+
+.reupload-page { max-width: 730px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+.reupload-card { padding: 28px 30px; border: 1px solid var(--card-border); border-radius: 15px; background: #fff; box-shadow: var(--shadow-sm); }
+.reupload-card-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.reupload-card-head h2 { color: var(--ink); font-size: 22px; }
+.reupload-prompt { color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
+.reupload-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0 0 22px; padding: 15px 0; border-top: 1px solid #eef0f4; border-bottom: 1px solid #eef0f4; }
+.reupload-meta div { display: flex; flex-direction: column; gap: 5px; }
+.reupload-meta dt { color: #9ca4b5; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.reupload-meta dd { margin: 0; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+.reupload-upload { max-width: none; }
+
+.reupload-closed-card, .reupload-done-card { display: flex; flex-direction: column; align-items: center; padding: 54px 42px; border: 1px solid var(--card-border); border-radius: 17px; background: #fff; box-shadow: var(--shadow-sm); text-align: center; }
+.reupload-closed-card h2, .reupload-done-card h2 { margin-top: 10px; color: var(--ink); font-size: 26px; }
+.reupload-closed-card > p, .reupload-done-card > p { max-width: 460px; margin: 11px auto 26px; color: #7e879c; font-size: 12px; line-height: 1.65; }
+.reupload-closed-burst { color: #c46846; background: var(--peach-soft); box-shadow: 0 0 0 9px #fdf1ec; }
+
+@media (max-width: 640px) {
+  .reupload-banner-row { align-items: flex-start; flex-direction: column; }
+  .reupload-meta { grid-template-columns: 1fr; }
+}
+
+/* Admin re-upload controls, badge, and awaiting-review flag (task 3.14) */
+.reupload-review { display: flex; flex-direction: column; gap: 11px; }
+.reupload-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; padding: 12px 14px; border: 1px solid #e5e8ef; border-radius: 11px; background: #f8f9fc; }
+.reupload-controls p { margin: 0; color: var(--ink-soft); font-size: 12px; }
+.reupload-controls strong { color: var(--ink); }
+.reupload-open { border-color: #cfe0f6; background: #f3f8ff; }
+.reupload-expired { border-color: #f3d9c7; background: #fdf5ef; }
+.reupload-fulfilled { border-color: #cbe8d6; background: #f2fbf5; }
+.reupload-muted { color: #9da5b5 !important; }
+.reupload-request-form { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 320px; }
+.reupload-request-form input[type="datetime-local"] { padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 9px; font-size: 12px; }
+.reupload-actions { display: flex; gap: 8px; }
+.reupload-error { color: #c0392b !important; font-size: 11px; }
+.reupload-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; background: #2f9e63; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; }
+.submission-quiz .reupload-badge { margin-top: 4px; }

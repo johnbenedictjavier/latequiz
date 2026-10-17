@@ -7,6 +7,7 @@ export type StudentView =
   | 'quiz'
   | 'scores'
   | 'account'
+  | 'reupload'
 
 export type AdminView =
   | 'overview'
@@ -61,6 +62,8 @@ export interface Question {
   points: number
   options?: string[]
   answer?: string
+  /** Identification answer keys in admin order (admin loaders only). */
+  answers?: string[]
   response?: string
   requiresReview?: boolean
   partId?: string
@@ -132,17 +135,27 @@ export interface ScoreRecord {
 
 export type SubmissionStatus = 'needs-review' | 'graded' | 'in-progress'
 
+/** Raw `LQ_attempts.status` value. */
+export type AttemptStatus = 'in_progress' | 'submitted' | 'expired' | 'reviewed' | 'cancelled'
+
 export interface SubmissionAnswer {
   id?: string
   questionId: string
   prompt: string
   type: QuestionType
   answer: string
-  correctAnswer: string
+  /** Configured answer keys in admin order; empty when none are stored. */
+  correctAnswers: string[]
+  /** Raw `LQ_answers.file_path` (object path or legacy bare file name). */
+  filePath?: string | null
   points: number
   pointsAwarded: number
   isCorrect: boolean | null
   requiresReview: boolean
+  /** `LQ_answers.id` for the answer row; the key the re-upload RPCs act on. */
+  answerId?: string
+  /** Latest re-upload request for this answer, or null when none exists. */
+  reupload?: SubmissionReupload | null
 }
 
 export interface SubmissionPartColumn {
@@ -171,9 +184,59 @@ export interface Submission {
   possiblePoints: number
   timeTakenSeconds: number | null
   submissionReason?: 'manual' | 'exit' | 'timeout' | 'admin'
+  /** Raw `LQ_attempts.status`, used for re-upload eligibility in the drawer. */
+  attemptStatus: AttemptStatus
+  /** True when any answer has a fulfilled re-upload image not yet reviewed (2.26). */
+  hasImageAwaitingReview: boolean
   answers: SubmissionAnswer[]
   partColumns: SubmissionPartColumn[]
   parts?: PartScore[]
+}
+
+/** Stored `LQ_reupload_requests.status`. */
+export type ReuploadRequestStatus = 'open' | 'fulfilled' | 'cancelled'
+/** Stored status with an open request past its deadline reported as `expired`. */
+export type ReuploadEffectiveStatus = ReuploadRequestStatus | 'expired'
+
+/** A student's open re-upload request (from `LQ_my_reupload_requests`). */
+export interface ReuploadRequest {
+  id: string
+  attemptId: string
+  quizId: string
+  quizTitle: string
+  questionId: string
+  questionNumber: number
+  prompt: string
+  originalFileName: string
+  deadline: string | null
+  requestedAt: string
+}
+
+/** A full `LQ_reupload_requests` row (admin reads). */
+export interface ReuploadRequestRecord {
+  id: string
+  attemptId: string
+  questionId: string
+  answerId: string
+  originalFileName: string
+  requestedAt: string
+  deadline: string | null
+  status: ReuploadRequestStatus
+  fulfilledAt: string | null
+  fulfilledPath: string | null
+  cancelledAt: string | null
+  cancelReason: 'admin' | 'expired' | null
+}
+
+/** Latest re-upload request for a submission answer, as shown in the review drawer. */
+export interface SubmissionReupload {
+  id: string
+  status: ReuploadEffectiveStatus
+  deadline: string | null
+  requestedAt: string
+  fulfilledAt: string | null
+  originalFileName: string
+  awaitingReview: boolean
 }
 
 export interface SubmissionAssignment {
