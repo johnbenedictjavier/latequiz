@@ -7,6 +7,7 @@ export type StudentView =
   | 'quiz'
   | 'scores'
   | 'account'
+  | 'reupload'
 
 export type AdminView =
   | 'overview'
@@ -134,6 +135,9 @@ export interface ScoreRecord {
 
 export type SubmissionStatus = 'needs-review' | 'graded' | 'in-progress'
 
+/** Raw `LQ_attempts.status` value. */
+export type AttemptStatus = 'in_progress' | 'submitted' | 'expired' | 'reviewed' | 'cancelled'
+
 export interface SubmissionAnswer {
   id?: string
   questionId: string
@@ -148,6 +152,10 @@ export interface SubmissionAnswer {
   pointsAwarded: number
   isCorrect: boolean | null
   requiresReview: boolean
+  /** `LQ_answers.id` for the answer row; the key the re-upload RPCs act on. */
+  answerId?: string
+  /** Latest re-upload request for this answer, or null when none exists. */
+  reupload?: SubmissionReupload | null
 }
 
 export interface SubmissionPartColumn {
@@ -176,6 +184,10 @@ export interface Submission {
   possiblePoints: number
   timeTakenSeconds: number | null
   submissionReason?: 'manual' | 'exit' | 'timeout' | 'admin'
+  /** Raw `LQ_attempts.status`, used for re-upload eligibility in the drawer. */
+  attemptStatus: AttemptStatus
+  /** True when any answer has a fulfilled re-upload image not yet reviewed (2.26). */
+  hasImageAwaitingReview: boolean
   answers: SubmissionAnswer[]
   partColumns: SubmissionPartColumn[]
   parts?: PartScore[]

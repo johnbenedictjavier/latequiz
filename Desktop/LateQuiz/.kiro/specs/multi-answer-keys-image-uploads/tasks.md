@@ -64,7 +64,7 @@
   - Mark task complete when the tests are written, run, and passing on unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 3.15, 3.16, 3.17, 3.18, 3.19, 3.20, 3.21, 3.22, 3.23, 3.24, 3.25_
 
-- [ ] 3. Fix multiple identification answer keys, real image uploads, and legacy upload re-upload
+- [x] 3. Fix multiple identification answer keys, real image uploads, and legacy upload re-upload
 
   - [x] 3.1 Add the migration
     - New file `supabase/migrations/20261017000000_multi_answer_keys_and_submission_uploads.sql`
@@ -188,7 +188,7 @@
     - _Preservation: Property 6 from design: no regrade, no attempt/part-score writes, student storage writes still confined, closed attempts still immutable for direct student updates, notifications still admin-only, no keys in the student list_
     - _Requirements: 2.14, 2.15, 2.19, 2.20, 2.22, 2.23, 2.24, 2.25, 3.17, 3.18, 3.19, 3.20, 3.24, 3.25_
 
-  - [ ] 3.11 Create `src/lib/reuploads.ts`
+  - [x] 3.11 Create `src/lib/reuploads.ts`
     - Pure helpers: `isRequestOpen(r, now)`, `effectiveReuploadStatus(r, now)`, `canRequestReupload({ questionType, filePath, attemptStatus, requests, now })` (mirrors the RPC checks: upload question, legacy bare name, `attemptStatus` in `submitted`/`expired`/`reviewed`, no open unexpired request; `in_progress` and `cancelled` return false), `buildReuploadPath(schoolId, attemptId, questionId, requestId, ext)` → `{school}/{attempt}/{question}_{request}_{uuid}.{ext}`, `isValidReuploadPath(path, ctx)` (same rule as the SQL check), `isAwaitingImageReview(answer, latestRequest)`
     - `loadMyReuploadRequests()` → `rpc('LQ_my_reupload_requests')` mapped to `ReuploadRequest`
     - `submitReupload({ request, schoolId, file })`: `validateSubmissionImage` (same messages; nothing uploaded on failure) → `isRequestOpen` → `storage.upload(path, file, { contentType, upsert: false })` → `rpc('LQ_fulfill_reupload', { p_request_id, p_path })` → on RPC error best-effort `storage.remove([path])` and return the error; map a storage RLS denial to "This re-upload request is no longer open."
@@ -201,7 +201,7 @@
     - _Preservation: same upload validation as normal answers; no request action for non-eligible answers_
     - _Requirements: 2.14, 2.15, 2.18, 2.19, 2.21, 2.22, 2.23, 3.18, 3.20, 3.22_
 
-  - [ ] 3.12 Update types and data loading for re-upload requests
+  - [x] 3.12 Update types and data loading for re-upload requests
     - `src/types.ts`: `StudentView` adds `'reupload'`; new `ReuploadRequest { id, attemptId, quizId, quizTitle, questionId, questionNumber, prompt, originalFileName, deadline, requestedAt }`; `SubmissionAnswer` adds `answerId?` and `reupload?` (latest request: `id`, effective `status`, `deadline`, `requestedAt`, `fulfilledAt`, `originalFileName`, `awaitingReview`); `Submission` adds `attemptStatus` and `hasImageAwaitingReview`
     - `src/lib/workspace.ts`: `loadStudentWorkspace` also returns `reuploadRequests` from `loadMyReuploadRequests()`; on error log and return `[]` so the dashboard still loads. `loadAdminNotifications` unchanged
     - `src/lib/submissions.ts`: `loadAdminSubmissions` loads `LQ_reupload_requests` for the listed attempts, attaches the latest request per answer with `effectiveReuploadStatus`, computes `awaitingReview` and `hasImageAwaitingReview` (2.26: latest request `fulfilled` and `reviewed_at` null or earlier than `fulfilled_at`). `mapSubmissionStatus` and `deleteSubmission` unchanged (re-uploaded objects already sit under `{school_id}/{attempt_id}/`)
@@ -211,7 +211,7 @@
     - _Preservation: notifications still admin-only; submission status categories unchanged; delete behavior unchanged_
     - _Requirements: 2.16, 2.21, 2.25, 2.26, 3.11, 3.19, 3.25_
 
-  - [ ] 3.13 Add the student banner and re-upload page in `src/App.tsx`
+  - [x] 3.13 Add the student banner and re-upload page in `src/App.tsx`
     - `App` keeps `reuploadRequests` from the workspace load and `selectedReuploadId`; `StudentApp` gets `reuploadRequests` and `onOpenReupload(request)` that navigates to `'reupload'` (title "Re-upload image", eyebrow "Missing image")
     - `ReuploadRequestsBanner` on `StudentDashboard` and `StudentScoresPage`, above existing content, hidden when empty: `<section aria-labelledby>` heading "Image re-upload needed", one row per request with quiz title, "Question N", "Due {local date/time}" or "No deadline", and a "Re-upload image" button
     - `StudentReuploadPage`: resolves the request by id; if missing or no longer open shows "This re-upload request is no longer open." with a back button; otherwise shows quiz title, "Question N", the prompt, "Original file: {name}", the deadline, and one picker with the normal upload copy and `accept`. No timer, no other questions or answers. Validation errors inline with `role="alert"`; "Uploading…" disabled button while sending; on success a `role="status"` panel "Image received. Your teacher will review it.", a workspace refresh so the banner entry disappears, and "Back to dashboard"
@@ -222,7 +222,7 @@
     - _Preservation: normal quiz-taking flow untouched; no student notification centre; no keys/points shown_
     - _Requirements: 2.16, 2.17, 2.18, 2.19, 2.22, 2.24, 3.19, 3.23, 3.25_
 
-  - [ ] 3.14 Add admin re-upload controls, badge, and notification click-through in `src/App.tsx`
+  - [x] 3.14 Add admin re-upload controls, badge, and notification click-through in `src/App.tsx`
     - `SubmissionReviewDrawer` upload answers:
       - Legacy name and `canRequestReupload` true: the 2.13 notice plus "Request re-upload", revealing an optional "Deadline" `datetime-local` (admin local time, sent as ISO 8601, past values blocked with a message) and a confirm button; on success re-render via `onSaved`
       - Open request: "Re-upload requested {date}", "Due {date}" or "No deadline", and "Cancel request" behind a `ConfirmModal`
@@ -237,7 +237,7 @@
     - _Preservation: no request action for real paths or ineligible answers; review flow, status categories, and other notification routing unchanged; no automatic regrade or status change_
     - _Requirements: 2.14, 2.15, 2.20, 2.21, 2.22, 2.23, 2.26, 3.9, 3.20, 3.21, 3.22, 3.24_
 
-  - [ ] 3.15 Add the env-gated end-to-end suite
+  - [x] 3.15 Add the env-gated end-to-end suite
     - New file `tests/e2e/multiAnswerKeysUploads.test.ts`, skipped unless `LATEQUIZ_E2E_SUPABASE_URL`, `LATEQUIZ_E2E_ANON_KEY`, and `LATEQUIZ_E2E_SERVICE_ROLE_KEY` are set (local `supabase start` or a staging project; never production). Apply both migrations in deploy order
     - Identification: admin saves a quiz with an identification question keyed `["Central Processing Unit", "CPU"]` plus an MC question; student answers `"cpu"` and submits via `submit-attempt`; assert full points and unchanged MC grading. Repeat with an expired attempt through `finalize-expired-attempts`
     - Image submission: upload a PNG, assert the object exists at `{school}/{attempt}/…` and `file_path` matches; replace with a WEBP and assert the PNG is gone; PDF and >10 MB rejected by client and bucket; uploads into another student's folder or a submitted attempt denied by RLS; after submit the student cannot delete the object
@@ -267,7 +267,7 @@
     - Clean up all seeded users, quizzes, attempts, requests, notifications, and objects after the run
     - _Requirements: 2.3, 2.4, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.19, 2.20, 2.21, 2.22, 2.23, 2.24, 2.25, 2.26, 3.10, 3.11, 3.12, 3.13, 3.14, 3.15, 3.16, 3.17, 3.18, 3.19, 3.20, 3.23, 3.24, 3.25_
 
-  - [ ] 3.16 Verify bug condition exploration test now passes
+  - [x] 3.16 Verify bug condition exploration test now passes
     - **Property 1: Expected Behavior** - Any configured identification key is accepted, keys are validated, image uploads are stored, validated, viewable, and cleaned up, and legacy uploads can be re-uploaded on admin request
     - **IMPORTANT**: Re-run the SAME tests from task 1. Do NOT write new tests
     - The tests from task 1 encode the expected behavior; passing confirms it is satisfied (design Properties 1, 2, and 5)
@@ -275,7 +275,7 @@
     - **EXPECTED OUTCOME**: Tests PASS (confirms the bug is fixed)
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12, 2.13, 2.14, 2.15, 2.16, 2.17, 2.18, 2.19, 2.20, 2.21, 2.22, 2.23, 2.24, 2.25, 2.26_
 
-  - [ ] 3.17 Verify preservation tests still pass
+  - [x] 3.17 Verify preservation tests still pass
     - **Property 2: Preservation** - Single-key grading, normalization, MC/essay/upload routing, scoring, attempt immutability, and admin-only notifications unchanged
     - **IMPORTANT**: Re-run the SAME tests from task 2. Do NOT write new tests
     - Run `npm test` with the fixed sides pointed at the shared answer keys module and `src/lib/reuploads.ts` (design Properties 3, 4, and 6)
@@ -283,7 +283,7 @@
     - Live-project preservation checks (3.10–3.13, 3.15, 3.17, 3.18, 3.20, 3.23) run in the task 3.15 suite
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.14, 3.16, 3.19, 3.21, 3.22, 3.24, 3.25_
 
-- [ ] 4. Checkpoint - Ensure all tests pass
+- [x] 4. Checkpoint - Ensure all tests pass
   - Run `npm run build` (`tsc -b && vite build`) and fix any type or build errors
   - Run `npm test`; all unit and property-based suites pass
   - If the e2e env vars are available, run the end-to-end suite and confirm the identification, image-submission, and re-upload flows pass; otherwise state that it was skipped and why

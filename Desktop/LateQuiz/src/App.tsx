@@ -58,11 +58,15 @@ import { deleteSubmission, loadAdminSubmissions, reviewSubmission } from './lib/
 import { sortStudents } from './lib/sorting'
 import { removeSubmissionImage, uploadSubmissionImage, validateSubmissionImage } from './lib/submissionUploads'
 import { isSubmitBlockedByUploads, LEGACY_UPLOAD_NOTICE, nextUploadCount, UPLOAD_ACCEPT, UPLOAD_HINT, uploadAnswerState, uploadDisplayName } from './lib/uploadAnswer'
+import { submitReupload } from './lib/reuploads'
+import { reuploadBannerRows, reuploadDeadlineLabel, reuploadPageState } from './lib/reuploadView'
 import { notificationTarget } from './lib/notifications'
+import { cancelReupload, requestReupload } from './lib/reuploads'
+import { drawerReuploadState } from './lib/drawerReupload'
 import { answerKeyDisplay, NO_FIXED_ANSWER } from './lib/submissionReview'
 import { SubmissionImage } from './components/SubmissionImage'
 import { createSubject, loadAdminAssignments, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
-import type { AdminView, Notification, Question, Quiz, QuizPart, QuizReporter, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionAssignment, SubmissionDashboardCategory, SubmissionPartColumn, ToastMessage } from './types'
+import type { AdminView, Notification, Question, Quiz, QuizPart, QuizReporter, ReuploadRequest, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionAssignment, SubmissionDashboardCategory, SubmissionPartColumn, ToastMessage } from './types'
 import latequizLogo from '../latequiz.png'
 
 type AuthRoute = 'student' | 'admin'
@@ -131,6 +135,8 @@ export default function App() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([])
   const [adminQuizzes, setAdminQuizzes] = useState<Quiz[]>([])
   const [scores, setScores] = useState<ScoreRecord[]>([])
+  const [reuploadRequests, setReuploadRequests] = useState<ReuploadRequest[]>([])
+  const [selectedReuploadId, setSelectedReuploadId] = useState<string | null>(null)
   const [pendingQuiz, setPendingQuiz] = useState<Quiz | null>(null)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
@@ -159,6 +165,8 @@ export default function App() {
     setMustChangePassword(false)
     setQuizzes([])
     setScores([])
+    setReuploadRequests([])
+    setSelectedReuploadId(null)
     setAdminQuizzes([])
     setSelectedQuiz(null)
     setPendingQuiz(null)
@@ -246,11 +254,13 @@ export default function App() {
       if (!active) return
       setQuizzes(workspace.quizzes)
       setScores(workspace.scores)
+      setReuploadRequests(workspace.reuploadRequests)
       if (workspace.quizzes[0]) setSelectedQuizId(workspace.quizzes[0].id)
     }).catch((error: Error) => {
       if (active) {
         setQuizzes([])
         setScores([])
+        setReuploadRequests([])
         notify({ tone: 'warning', title: 'Unable to load workspace', message: error.message })
       }
     })
@@ -282,6 +292,7 @@ export default function App() {
       const workspace = await loadStudentWorkspace(student.schoolId)
       setQuizzes(workspace.quizzes)
       setScores(workspace.scores)
+      setReuploadRequests(workspace.reuploadRequests)
     } catch (error) {
       notify({ tone: 'warning', title: 'Unable to refresh scores', message: (error as Error).message })
     }
@@ -307,6 +318,11 @@ export default function App() {
     setSelectedQuiz(pendingQuiz)
     setStudentView('quiz')
     setPendingQuiz(null)
+  }
+
+  const openReupload = (request: ReuploadRequest) => {
+    setSelectedReuploadId(request.id)
+    setStudentView('reupload')
   }
 
   const handleLogout = () => setShowLogoutConfirm(true)
@@ -342,7 +358,7 @@ export default function App() {
   }
 
   return <>
-    {role === 'student' && student ? <StudentApp student={student} view={studentView} quiz={selectedQuiz ?? quizzes.find((item) => item.id === selectedQuizId) ?? null} quizzes={quizzes} scores={scores} onNavigate={setStudentView} onOpenQuiz={openQuiz} onRefreshWorkspace={refreshStudentWorkspace} onStudentUpdate={setStudent} onLogout={handleLogout} notify={notify} /> : <AdminApp view={adminView} quizzes={adminQuizzes} builderQuiz={adminQuizzes.find((item) => item.id === builderQuizId) ?? null} isBuilderNew={isBuilderNew} onNavigate={setAdminView} onStartBuilder={(isNew, quiz) => { setIsBuilderNew(isNew); setBuilderQuizId(quiz?.id ?? null); setAdminView('builder') }} onRefreshQuizzes={refreshAdminQuizzes} onLogout={handleLogout} notify={notify} />}
+    {role === 'student' && student ? <StudentApp student={student} view={studentView} quiz={selectedQuiz ?? quizzes.find((item) => item.id === selectedQuizId) ?? null} quizzes={quizzes} scores={scores} reuploadRequests={reuploadRequests} selectedReuploadId={selectedReuploadId} onOpenReupload={openReupload} onNavigate={setStudentView} onOpenQuiz={openQuiz} onRefreshWorkspace={refreshStudentWorkspace} onStudentUpdate={setStudent} onLogout={handleLogout} notify={notify} /> : <AdminApp view={adminView} quizzes={adminQuizzes} builderQuiz={adminQuizzes.find((item) => item.id === builderQuizId) ?? null} isBuilderNew={isBuilderNew} onNavigate={setAdminView} onStartBuilder={(isNew, quiz) => { setIsBuilderNew(isNew); setBuilderQuizId(quiz?.id ?? null); setAdminView('builder') }} onRefreshQuizzes={refreshAdminQuizzes} onLogout={handleLogout} notify={notify} />}
     {pendingQuiz && <ConfirmModal title="Start this quiz?" message={`${pendingQuiz.title} contains ${pendingQuiz.questions} question${pendingQuiz.questions === 1 ? '' : 's'} and allows ${pendingQuiz.durationMinutes} minutes. Your attempt timer starts when you continue.`} confirmLabel="Take quiz" onCancel={() => setPendingQuiz(null)} onConfirm={confirmQuizStart} />}
     {showLogoutConfirm && <ConfirmModal title="Sign out of LateQuiz?" message="Your current session will be closed on this device." confirmLabel={isLoggingOut ? 'Signing out...' : 'Sign out'} onCancel={() => setShowLogoutConfirm(false)} onConfirm={() => void confirmLogout()} />}
     {toast && <Toast toast={toast} onClose={() => notify(null)} />}
@@ -467,7 +483,7 @@ function LegacyStudentApp({ student, view, quiz, quizzes, scores, onNavigate, on
   const [mobileOpen, setMobileOpen] = useState(false)
   const title = view === 'dashboard' ? 'Your recovery plan' : view === 'quiz' ? quiz?.title ?? 'Quiz workspace' : view === 'scores' ? 'Your scores' : 'Account settings'
   const eyebrow = view === 'dashboard' ? 'Student workspace' : view === 'quiz' ? quiz?.subject ?? DEFAULT_SUBJECT : view === 'scores' ? 'Progress history' : 'Personal settings'
-  return <div className="app-shell"><Sidebar role="student" active={view} student={student} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as StudentView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><button className="icon-button topbar-help" onClick={() => notify({ tone: 'info', title: 'Need help?', message: 'Contact your LateQuiz administrator.' })} aria-label="Help"><HelpCircle size={19} /></button><button className="avatar avatar-small" aria-label="Open account" onClick={() => onNavigate('account')}>{initials(student)}</button></div></header><main className="page-content">{view === 'dashboard' && <StudentDashboard student={student} quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} onNavigate={onNavigate} />}{view === 'quiz' && quiz && <StudentQuiz student={student} schoolId={student.schoolId} quiz={quiz} onExit={() => onNavigate('dashboard')} onRefreshWorkspace={onRefreshWorkspace} notify={notify} />}{view === 'scores' && <StudentScoresPage quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} />}{view === 'account' && <StudentAccount student={student} notify={notify} />}</main></div></div>
+  return <div className="app-shell"><Sidebar role="student" active={view} student={student} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as StudentView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><button className="icon-button topbar-help" onClick={() => notify({ tone: 'info', title: 'Need help?', message: 'Contact your LateQuiz administrator.' })} aria-label="Help"><HelpCircle size={19} /></button><button className="avatar avatar-small" aria-label="Open account" onClick={() => onNavigate('account')}>{initials(student)}</button></div></header><main className="page-content">{view === 'dashboard' && <StudentDashboard student={student} quizzes={quizzes} scores={scores} reuploadRequests={[]} onOpenReupload={() => undefined} onOpenQuiz={onOpenQuiz} onNavigate={onNavigate} />}{view === 'quiz' && quiz && <StudentQuiz student={student} schoolId={student.schoolId} quiz={quiz} onExit={() => onNavigate('dashboard')} onRefreshWorkspace={onRefreshWorkspace} notify={notify} />}{view === 'scores' && <StudentScoresPage quizzes={quizzes} scores={scores} reuploadRequests={[]} onOpenReupload={() => undefined} onOpenQuiz={onOpenQuiz} />}{view === 'account' && <StudentAccount student={student} notify={notify} />}</main></div></div>
 }
 
 function LegacyAdminApp({ view, quizzes, builderQuiz, isBuilderNew, onNavigate, onStartBuilder, onRefreshQuizzes, onLogout, notify }: { view: AdminView; quizzes: Quiz[]; builderQuiz: Quiz | null; isBuilderNew: boolean; onNavigate: (view: AdminView) => void; onStartBuilder: (isNew: boolean, quiz?: Quiz) => void; onRefreshQuizzes: () => Promise<void>; onLogout: () => void; notify: (toast: ToastMessage) => void }) {
@@ -475,6 +491,7 @@ function LegacyAdminApp({ view, quizzes, builderQuiz, isBuilderNew, onNavigate, 
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [focusStudentId, setFocusStudentId] = useState<string | null>(null)
+  const [focusAttemptId, setFocusAttemptId] = useState<string | null>(null)
 
   const refreshNotifications = async () => {
     try {
@@ -494,13 +511,14 @@ function LegacyAdminApp({ view, quizzes, builderQuiz, isBuilderNew, onNavigate, 
     setNotifications((items) => items.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item))
     const target = notificationTarget(notification)
     setFocusStudentId(target.focusStudentId)
+    setFocusAttemptId(target.focusAttemptId)
     onNavigate(target.view)
   }
 
   const title = view === 'overview' ? `${currentGreeting(now)}, admin` : view === 'quizzes' ? 'Manage quizzes' : view === 'builder' ? (isBuilderNew ? 'Create a new quiz' : 'Edit quiz') : view === 'submissions' ? 'Student submissions' : 'Manage students'
   const eyebrow = view === 'overview' ? 'Admin workspace' : view === 'quizzes' ? 'Assessment library' : view === 'builder' ? 'Quiz studio' : view === 'submissions' ? 'Review queue' : 'Roster and access'
   const unread = notifications.filter((item) => !item.readAt).length
-  return <div className="app-shell admin-shell"><Sidebar role="admin" active={view} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as AdminView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><NotificationCenter notifications={notifications} unread={unread} onOpen={handleNotification} /><div className="admin-avatar">A</div></div></header><main className="page-content">{view === 'overview' && <AdminOverviewPage quizzes={quizzes} onNavigate={onNavigate} />}{view === 'quizzes' && <AdminQuizzes quizzes={quizzes} onStartBuilder={onStartBuilder} onRefresh={onRefreshQuizzes} notify={notify} />}{view === 'builder' && <AdminBuilderWorkspace key={builderQuiz?.id ?? 'new'} isNew={isBuilderNew} quiz={builderQuiz} onNavigate={onNavigate} onSaved={async () => { await onRefreshQuizzes(); onNavigate('quizzes') }} notify={notify} />}{view === 'submissions' && <AdminSubmissions quizzes={quizzes} notify={notify} />}{view === 'students' && <AdminStudentsPage focusStudentId={focusStudentId} notify={notify} />}</main></div></div>
+  return <div className="app-shell admin-shell"><Sidebar role="admin" active={view} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as AdminView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><NotificationCenter notifications={notifications} unread={unread} onOpen={handleNotification} /><div className="admin-avatar">A</div></div></header><main className="page-content">{view === 'overview' && <AdminOverviewPage quizzes={quizzes} onNavigate={onNavigate} />}{view === 'quizzes' && <AdminQuizzes quizzes={quizzes} onStartBuilder={onStartBuilder} onRefresh={onRefreshQuizzes} notify={notify} />}{view === 'builder' && <AdminBuilderWorkspace key={builderQuiz?.id ?? 'new'} isNew={isBuilderNew} quiz={builderQuiz} onNavigate={onNavigate} onSaved={async () => { await onRefreshQuizzes(); onNavigate('quizzes') }} notify={notify} />}{view === 'submissions' && <AdminSubmissions quizzes={quizzes} notify={notify} focusAttemptId={focusAttemptId} />}{view === 'students' && <AdminStudentsPage focusStudentId={focusStudentId} notify={notify} />}</main></div></div>
 }
 
 function LegacySidebar({ role, active, onNavigate, onLogout, student, mobileOpen, onClose }: { role: Role; active: string; onNavigate: (view: string) => void; onLogout: () => void; student?: Student; mobileOpen: boolean; onClose: () => void }) {
@@ -1115,7 +1133,7 @@ function SubmissionReportModal({ quiz, entries, onClose }: { quiz: Quiz; entries
   return <div className="modal-overlay" onClick={onClose}><section className="submission-report-modal" role="dialog" aria-modal="true" aria-labelledby="submission-report-title" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Score report</span><h2 id="submission-report-title">{quiz.title}</h2><p>Part scores and totals for the selected quiz.</p></div><button className="icon-button" onClick={onClose} aria-label="Close score report"><X size={18} /></button></div><div className="submission-report-summary"><span><strong>{entries.length}</strong> assigned</span><span><strong>{activeSubmissions.length}</strong> submitted</span><span><strong>{Math.max(entries.length - submissions.length, 0)}</strong> not started</span></div><div className="submission-report-table-wrap"><div className="submission-report-head" style={{ gridTemplateColumns }}><span>Student</span>{columns.map((column) => <span key={`${column.partId ?? 'general'}-${column.position}`}>{column.title}<small>{formatSubmissionPoints(column.possiblePoints)} pts</small></span>)}<span>Total score</span></div><div className="submission-report-body">{entries.length ? entries.map((entry) => { const submission = entry.submission; return <div className="submission-report-row" style={{ gridTemplateColumns }} key={`${entry.student.schoolId}-${entry.quizTitle}`}><div className="submission-report-student"><strong>{submissionFullName(entry.student)}</strong><small>{entry.student.schoolId}</small></div>{columns.map((column) => <span className="submission-report-cell submission-report-part" data-label={column.title} key={`${entry.student.schoolId}-${column.partId ?? 'general'}`}>{submission ? compactPartScore(submission, column) : '—'}</span>)}<div className={`submission-report-total ${submission ? '' : 'is-pending'}`}><strong>{submission ? `${formatSubmissionPoints(submission.earnedPoints)} / ${formatSubmissionPoints(submission.possiblePoints)}` : 'Not started'}</strong><small>{submission ? submission.score !== null ? `${submission.score}%` : submissionStatusLabel(submission.status) : 'No submission yet'}</small></div></div> }) : <div className="empty-state"><ClipboardCheck size={22} /><strong>No assigned students</strong><span>Assign students to this quiz to build a score report.</span></div>}</div></div><div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Close</button></div></section></div>
 }
 
-function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast: ToastMessage) => void }) {
+function AdminSubmissions({ quizzes, notify, focusAttemptId }: { quizzes: Quiz[]; notify: (toast: ToastMessage) => void; focusAttemptId?: string | null }) {
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [assignments, setAssignments] = useState<SubmissionAssignment[]>([])
   const [students, setStudents] = useState<Student[]>([])
@@ -1142,6 +1160,12 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
   }
 
   useEffect(() => { void refresh() }, [])
+  // Opening a "re-uploaded image received" notification focuses that attempt's drawer.
+  useEffect(() => {
+    if (!focusAttemptId) return
+    const match = submissions.find((submission) => submission.id === focusAttemptId)
+    if (match) setSelected(match)
+  }, [focusAttemptId, submissions])
 
   const quizOptions = quizzes
     .map((quiz) => [quiz.id, quiz.title] as const)
@@ -1227,7 +1251,7 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
           <div className="submission-table">
             {filtered.map((submission) => <div className="submission-row submission-row-full" key={submission.id}>
               <div className="submission-student"><span className="avatar avatar-tiny avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId}</span></div></div>
-              <div className="submission-quiz"><strong>{submission.quizTitle}</strong><span>Attempt {submission.attemptNumber} · {submission.quizSubject}</span></div>
+              <div className="submission-quiz"><strong>{submission.quizTitle}</strong><span>Attempt {submission.attemptNumber} · {submission.quizSubject}</span>{submission.hasImageAwaitingReview && <span className="reupload-badge" title="A re-uploaded image is awaiting review">New image</span>}</div>
               <StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge>
               <span className="submission-date">{submissionDate(submission.submittedAt)}</span>
               <span className="submission-date">{formatDuration(submission.timeTakenSeconds)}</span>
@@ -1237,7 +1261,7 @@ function AdminSubmissions({ quizzes, notify }: { quizzes: Quiz[]; notify: (toast
           </div>
         </> : <div className="empty-state"><ClipboardCheck size={24} /><strong>No submissions found</strong><span>Try a different status, quiz, or search term.</span></div>}
       </section>
-      {selected && <SubmissionReviewDrawer submission={selected} notify={notify} onClose={() => setSelected(null)} onSaved={async () => { await refresh(); setSelected(null) }} onDeleted={async () => { await refresh(); setSelected(null) }} />}
+      {selected && <SubmissionReviewDrawer submission={selected} notify={notify} onClose={() => setSelected(null)} onSaved={async () => { await refresh(); setSelected(null) }} onDeleted={async () => { await refresh(); setSelected(null) }} onReuploadChanged={async () => { const fresh = await loadAdminSubmissions(); setSubmissions(fresh); const match = fresh.find((item) => item.id === selected.id); setSelected(match ?? null) }} />}
       {dashboardCategory && <SubmissionDashboardModal category={dashboardCategory} entries={dashboardCategory === 'assigned' ? assignmentEntries : dashboardCategory === 'started' ? startedEntries : dashboardCategory === 'answered' ? answeredEntries : dashboardCategory === 'not-answered' ? notAnsweredEntries : reviewEntries} onClose={() => setDashboardCategory(null)} />}
       {isReportOpen && selectedQuiz && <SubmissionReportModal quiz={selectedQuiz} entries={assignmentEntries} onClose={() => setIsReportOpen(false)} />}
     </div>
@@ -1250,7 +1274,7 @@ function AnswerKeyLine({ type, keys }: { type: SubmissionAnswer['type']; keys: s
   return <div className="correct-answer"><span>{display.label}:</span>{display.values.length ? <ul aria-label={display.label}>{display.values.map((value, index) => <li key={`${index}-${value}`}><strong>{value}</strong></li>)}</ul> : <strong>{NO_FIXED_ANSWER}</strong>}</div>
 }
 
-function SubmissionReviewDrawer({ submission, notify, onClose, onSaved, onDeleted }: { submission: Submission; notify: (toast: ToastMessage) => void; onClose: () => void; onSaved: () => Promise<void>; onDeleted: () => Promise<void> }) {
+function SubmissionReviewDrawer({ submission, notify, onClose, onSaved, onDeleted, onReuploadChanged }: { submission: Submission; notify: (toast: ToastMessage) => void; onClose: () => void; onSaved: () => Promise<void>; onDeleted: () => Promise<void>; onReuploadChanged: () => Promise<void> }) {
   const [answers, setAnswers] = useState<SubmissionAnswer[]>(submission.answers)
   const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -1284,7 +1308,97 @@ function SubmissionReviewDrawer({ submission, notify, onClose, onSaved, onDelete
   }
 
   const earnedPoints = answers.reduce((sum, answer) => sum + Number(answer.pointsAwarded || 0), 0)
-  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div><div><span>Time taken</span><strong>{formatDuration(submission.timeTakenSeconds)}</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div>{answer.type === 'upload' ? <SubmissionImage path={answer.filePath} questionNumber={index + 1} /> : <div className="student-answer"><span>Answer:</span><strong>{answer.answer || 'No answer submitted'}</strong></div>}<AnswerKeyLine type={answer.type} keys={answer.correctAnswers} /><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked, ...(event.target.checked ? { pointsAwarded: answer.points } : {}) })} /><span>Mark correct</span></label></div></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
+  return <div className="drawer-overlay" onClick={onClose}><section className="review-drawer" role="dialog" aria-modal="true" aria-labelledby="submission-review-title" onClick={(event) => event.stopPropagation()}><header className="drawer-header"><div><span className="eyebrow eyebrow-accent">Submission review</span><h2 id="submission-review-title">{submission.quizTitle}</h2><span>{displayName(submission.student)} · Attempt {submission.attemptNumber} · {submissionDate(submission.submittedAt)}</span></div><button className="icon-button" onClick={onClose} aria-label="Close submission review"><X size={18} /></button></header><div className="drawer-content"><div className="drawer-student-card"><span className="avatar avatar-small avatar-mint">{initials(submission.student)}</span><div><strong>{displayName(submission.student)}</strong><span>{submission.student.schoolId} · {submission.quizSubject}</span></div><StatusBadge tone={submissionStatusTone(submission.status)}>{submissionStatusLabel(submission.status)}</StatusBadge></div><div className="review-score-summary"><div><span>Current final score</span><strong>{submission.score === null ? 'Pending' : `${submission.score}%`}</strong></div><div><span>Edited total</span><strong>{earnedPoints} / {submission.possiblePoints} pts</strong></div><div><span>Auto score</span><strong>{submission.autoScore}%</strong></div><div><span>Time taken</span><strong>{formatDuration(submission.timeTakenSeconds)}</strong></div></div>{!canGrade && <div className="info-callout"><CircleAlert size={17} /><span>This attempt is still in progress. You can delete it, but grading becomes available after submission.</span></div>}<div className="review-answer-list">{answers.map((answer, index) => <article className="manual-answer-card" key={answer.questionId}><div className="manual-answer-heading"><div><span className="eyebrow">Question {index + 1} · {answer.type}</span><h3>{answer.prompt}</h3></div><span className="points-pill">{answer.points} pts possible</span></div>{answer.type === 'upload' ? <UploadAnswerReview answer={answer} questionNumber={index + 1} attemptStatus={submission.attemptStatus} schoolId={submission.student.schoolId} notify={notify} onReuploadChanged={onReuploadChanged} /> : <div className="student-answer"><span>Answer:</span><strong>{answer.answer || 'No answer submitted'}</strong></div>}<AnswerKeyLine type={answer.type} keys={answer.correctAnswers} /><div className="manual-score-row"><div><label className="field-label" htmlFor={`submission-points-${answer.questionId}`}>Points awarded</label><div className="points-input"><input id={`submission-points-${answer.questionId}`} type="number" min="0" max={answer.points} step="0.01" value={answer.pointsAwarded} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { pointsAwarded: Math.min(answer.points, Math.max(0, Number(event.target.value) || 0)) })} /><span>/ {answer.points}</span></div></div><label className="review-correct-toggle"><input type="checkbox" checked={answer.isCorrect === true} disabled={!canGrade} onChange={(event) => updateAnswer(answer.questionId, { isCorrect: event.target.checked, ...(event.target.checked ? { pointsAwarded: answer.points } : {}) })} /><span>Mark correct</span></label></div></article>)}</div></div><footer className="drawer-footer"><button className="button button-ghost danger-button" disabled={isDeleting} onClick={() => setConfirmDelete(true)}><Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete submission'}</button><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={!canGrade || isSaving} onClick={() => void save()}>{isSaving ? 'Saving...' : 'Save grading'} <Check size={15} /></button></footer>{confirmDelete && <ConfirmModal title="Delete this submission?" message="The attempt, answers, and part scores will be permanently removed. This cannot be undone." confirmLabel={isDeleting ? 'Deleting...' : 'Delete submission'} onCancel={() => setConfirmDelete(false)} onConfirm={() => void remove()} />}</section></div>
+}
+
+function UploadAnswerReview({ answer, questionNumber, attemptStatus, schoolId, notify, onReuploadChanged }: { answer: SubmissionAnswer; questionNumber: number; attemptStatus: Submission['attemptStatus']; schoolId: string; notify: (toast: ToastMessage) => void; onReuploadChanged: () => Promise<void> }) {
+  const state = drawerReuploadState(answer, attemptStatus)
+  const [showForm, setShowForm] = useState(false)
+  const [deadline, setDeadline] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+
+  const submitRequest = async () => {
+    if (!answer.answerId) return
+    setBusy(true)
+    setError(null)
+    // Local datetime-local value → ISO 8601; requestReupload rejects a non-future deadline.
+    const iso = deadline ? new Date(deadline).toISOString() : null
+    const result = await requestReupload(answer.answerId, iso)
+    setBusy(false)
+    if (result.error) {
+      setError((result.error as Error).message ?? 'The re-upload request could not be created.')
+      return
+    }
+    setShowForm(false)
+    setDeadline('')
+    notify({ tone: 'success', title: 'Re-upload requested', message: 'The student will see the request on their dashboard.' })
+    await onReuploadChanged()
+  }
+
+  const cancelRequest = async (requestId: string) => {
+    setBusy(true)
+    const result = await cancelReupload(requestId, { schoolId })
+    setBusy(false)
+    if (result.error) return notify({ tone: 'warning', title: 'Request could not be cancelled', message: (result.error as Error).message })
+    setConfirmCancel(false)
+    notify({ tone: 'success', title: 'Re-upload request cancelled', message: 'The student can no longer upload for this request.' })
+    await onReuploadChanged()
+  }
+
+  // The fulfilled image renders through the existing signed-URL component; every
+  // other state shows the stored path (legacy or empty) with the 2.13 fallback.
+  const image = <SubmissionImage path={answer.filePath} questionNumber={questionNumber} />
+
+  const requestForm = (
+    <div className="reupload-request-form">
+      <label className="field-label" htmlFor={`reupload-deadline-${answer.questionId}`}>Deadline (optional)</label>
+      <input id={`reupload-deadline-${answer.questionId}`} type="datetime-local" value={deadline} disabled={busy} onChange={(event) => setDeadline(event.target.value)} />
+      {error && <p className="reupload-error" role="alert">{error}</p>}
+      <div className="reupload-actions">
+        <button className="button button-small button-secondary" disabled={busy} onClick={() => { setShowForm(false); setError(null) }}>Cancel</button>
+        <button className="button button-small button-primary" disabled={busy} onClick={() => void submitRequest()}>{busy ? 'Requesting...' : 'Confirm request'}</button>
+      </div>
+    </div>
+  )
+
+  const requestButton = (
+    <button className="button button-small button-secondary reupload-request-button" disabled={busy || !answer.answerId} onClick={() => { setShowForm(true); setError(null) }}>Request re-upload</button>
+  )
+
+  return (
+    <div className="reupload-review">
+      {image}
+      {state.kind === 'request' && <div className="reupload-controls">{showForm ? requestForm : requestButton}</div>}
+      {state.kind === 'open' && (
+        <div className="reupload-controls reupload-open" role="status">
+          <p><strong>Re-upload requested</strong> {reuploadDeadlineLabel(state.requestedAt)}</p>
+          <p>{state.deadline ? `Due ${reuploadDeadlineLabel(state.deadline)}` : 'No deadline'}</p>
+          <button className="button button-small button-ghost danger-button" disabled={busy} onClick={() => setConfirmCancel(true)}>Cancel request</button>
+          {confirmCancel && <ConfirmModal title="Cancel this re-upload request?" message="The student will no longer be able to upload an image for this request." confirmLabel={busy ? 'Cancelling...' : 'Cancel request'} onCancel={() => setConfirmCancel(false)} onConfirm={() => void cancelRequest(state.requestId)} />}
+        </div>
+      )}
+      {state.kind === 'expired' && (
+        <div className="reupload-controls reupload-expired">
+          <p role="status"><strong>Re-upload request expired</strong> {reuploadDeadlineLabel(state.requestedAt)}</p>
+          {state.canRequest && (showForm ? requestForm : requestButton)}
+        </div>
+      )}
+      {state.kind === 'cancelled' && (
+        <div className="reupload-controls reupload-cancelled">
+          <p className="reupload-muted">Re-upload request cancelled {reuploadDeadlineLabel(state.requestedAt)}</p>
+          {state.canRequest && (showForm ? requestForm : requestButton)}
+        </div>
+      )}
+      {state.kind === 'fulfilled' && (
+        <div className="reupload-controls reupload-fulfilled">
+          <p>Re-uploaded {reuploadDeadlineLabel(state.fulfilledAt)}{state.originalFileName ? ` (original file: ${state.originalFileName})` : ''}</p>
+          {state.awaitingReview && <span className="reupload-badge" role="status">New image awaiting review</span>}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function AuthLoadingScreen() {
@@ -1460,18 +1574,19 @@ function MobileBottomNav({ active, hasReporterAccess, onNavigate }: { active: st
   return <nav className="mobile-bottom-nav" aria-label="Student navigation">{items.filter((item) => item.id !== 'reporters' || hasReporterAccess).map((item) => { const Icon = item.icon; return <button key={item.id} className={active === item.id ? 'active' : ''} aria-current={active === item.id ? 'page' : undefined} onClick={() => onNavigate(item.id as StudentView)}><Icon size={17} /><span>{item.label}</span></button> })}</nav>
 }
 
-function StudentApp({ student, view, quiz, quizzes, scores, onNavigate, onOpenQuiz, onRefreshWorkspace, onStudentUpdate, onLogout, notify }: { student: Student; view: StudentView; quiz: Quiz | null; quizzes: Quiz[]; scores: ScoreRecord[]; onNavigate: (view: StudentView) => void; onOpenQuiz: (quiz: Quiz) => void; onRefreshWorkspace: () => Promise<void>; onStudentUpdate: (student: Student) => void; onLogout: () => void; notify: (toast: ToastMessage) => void }) {
+function StudentApp({ student, view, quiz, quizzes, scores, reuploadRequests, selectedReuploadId, onOpenReupload, onNavigate, onOpenQuiz, onRefreshWorkspace, onStudentUpdate, onLogout, notify }: { student: Student; view: StudentView; quiz: Quiz | null; quizzes: Quiz[]; scores: ScoreRecord[]; reuploadRequests: ReuploadRequest[]; selectedReuploadId: string | null; onOpenReupload: (request: ReuploadRequest) => void; onNavigate: (view: StudentView) => void; onOpenQuiz: (quiz: Quiz) => void; onRefreshWorkspace: () => Promise<void>; onStudentUpdate: (student: Student) => void; onLogout: () => void; notify: (toast: ToastMessage) => void }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const reporterViewing = view === 'quiz' && quiz?.isReporter === true
   const answering = view === 'quiz' && !reporterViewing
   const hasReporterAccess = quizzes.some((item) => item.isReporter)
-  const title = view === 'dashboard' ? 'Your recovery plan' : view === 'quizzes' ? 'Your quizzes' : view === 'reporters' ? 'Reporter workspace' : view === 'quiz' ? quiz?.title ?? 'Quiz workspace' : view === 'scores' ? 'Your scores' : 'Account settings'
-  const eyebrow = view === 'dashboard' ? 'Student workspace' : view === 'quizzes' ? 'Assessment library' : view === 'reporters' ? 'Read-only review' : view === 'quiz' ? quiz?.subject ?? DEFAULT_SUBJECT : view === 'scores' ? 'Progress history' : 'Personal settings'
-  const activeNavigation = reporterViewing ? 'reporters' : view
-  return <div className="app-shell"><Sidebar role="student" active={activeNavigation} student={student} hasReporterAccess={hasReporterAccess} disabled={answering} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as StudentView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" disabled={answering} onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><button className="icon-button topbar-help" disabled={answering} onClick={() => notify({ tone: 'info', title: 'Need help?', message: 'Contact your LateQuiz administrator.' })} aria-label="Help"><HelpCircle size={19} /></button><button className="avatar avatar-small" disabled={answering} aria-label="Open account" onClick={() => onNavigate('account')}>{student.avatar ? <img className="avatar-image" src={student.avatar} alt="" /> : initials(student)}</button></div></header><main className="page-content">{view === 'dashboard' && <StudentDashboard student={student} quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} onNavigate={onNavigate} />}{view === 'quizzes' && <StudentQuizzesPage quizzes={quizzes} onOpenQuiz={onOpenQuiz} />}{view === 'reporters' && <ReporterWorkspacePage quizzes={quizzes} onOpenQuiz={onOpenQuiz} />}{view === 'quiz' && quiz && <StudentQuiz student={student} schoolId={student.schoolId} quiz={quiz} onExit={() => onNavigate(quiz.isReporter ? 'reporters' : 'quizzes')} onRefreshWorkspace={onRefreshWorkspace} notify={notify} />}{view === 'scores' && <StudentScoresPage quizzes={quizzes} scores={scores} onOpenQuiz={onOpenQuiz} />}{view === 'account' && <StudentAccount student={student} onStudentUpdate={onStudentUpdate} notify={notify} />}</main></div>{!answering && <MobileBottomNav active={activeNavigation} hasReporterAccess={hasReporterAccess} onNavigate={onNavigate} />}</div>
+  const title = view === 'dashboard' ? 'Your recovery plan' : view === 'quizzes' ? 'Your quizzes' : view === 'reporters' ? 'Reporter workspace' : view === 'quiz' ? quiz?.title ?? 'Quiz workspace' : view === 'scores' ? 'Your scores' : view === 'reupload' ? 'Re-upload image' : 'Account settings'
+  const eyebrow = view === 'dashboard' ? 'Student workspace' : view === 'quizzes' ? 'Assessment library' : view === 'reporters' ? 'Read-only review' : view === 'quiz' ? quiz?.subject ?? DEFAULT_SUBJECT : view === 'scores' ? 'Progress history' : view === 'reupload' ? 'Missing image' : 'Personal settings'
+  // The re-upload page keeps the shell navigable; only the active quiz runner is "answering".
+  const activeNavigation = reporterViewing ? 'reporters' : view === 'reupload' ? 'dashboard' : view
+  return <div className="app-shell"><Sidebar role="student" active={activeNavigation} student={student} hasReporterAccess={hasReporterAccess} disabled={answering} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as StudentView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" disabled={answering} onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><button className="icon-button topbar-help" disabled={answering} onClick={() => notify({ tone: 'info', title: 'Need help?', message: 'Contact your LateQuiz administrator.' })} aria-label="Help"><HelpCircle size={19} /></button><button className="avatar avatar-small" disabled={answering} aria-label="Open account" onClick={() => onNavigate('account')}>{student.avatar ? <img className="avatar-image" src={student.avatar} alt="" /> : initials(student)}</button></div></header><main className="page-content">{view === 'dashboard' && <StudentDashboard student={student} quizzes={quizzes} scores={scores} reuploadRequests={reuploadRequests} onOpenReupload={onOpenReupload} onOpenQuiz={onOpenQuiz} onNavigate={onNavigate} />}{view === 'quizzes' && <StudentQuizzesPage quizzes={quizzes} onOpenQuiz={onOpenQuiz} />}{view === 'reporters' && <ReporterWorkspacePage quizzes={quizzes} onOpenQuiz={onOpenQuiz} />}{view === 'quiz' && quiz && <StudentQuiz student={student} schoolId={student.schoolId} quiz={quiz} onExit={() => onNavigate(quiz.isReporter ? 'reporters' : 'quizzes')} onRefreshWorkspace={onRefreshWorkspace} notify={notify} />}{view === 'scores' && <StudentScoresPage quizzes={quizzes} scores={scores} reuploadRequests={reuploadRequests} onOpenReupload={onOpenReupload} onOpenQuiz={onOpenQuiz} />}{view === 'reupload' && <StudentReuploadPage schoolId={student.schoolId} requests={reuploadRequests} selectedReuploadId={selectedReuploadId} onRefreshWorkspace={onRefreshWorkspace} onBack={() => onNavigate('dashboard')} notify={notify} />}{view === 'account' && <StudentAccount student={student} onStudentUpdate={onStudentUpdate} notify={notify} />}</main></div>{!answering && <MobileBottomNav active={activeNavigation} hasReporterAccess={hasReporterAccess} onNavigate={onNavigate} />}</div>
 }
 
-function StudentDashboard({ student, quizzes, scores, onOpenQuiz, onNavigate }: { student: Student; quizzes: Quiz[]; scores: ScoreRecord[]; onOpenQuiz: (quiz: Quiz) => void; onNavigate: (view: StudentView) => void }) {
+function StudentDashboard({ student, quizzes, scores, reuploadRequests, onOpenReupload, onOpenQuiz, onNavigate }: { student: Student; quizzes: Quiz[]; scores: ScoreRecord[]; reuploadRequests: ReuploadRequest[]; onOpenReupload: (request: ReuploadRequest) => void; onOpenQuiz: (quiz: Quiz) => void; onNavigate: (view: StudentView) => void }) {
   const now = useCurrentTime()
   const [statsOpen, setStatsOpen] = useState(true)
   const assigned = quizzes.filter((quiz) => quiz.isAssigned === true)
@@ -1479,7 +1594,71 @@ function StudentDashboard({ student, quizzes, scores, onOpenQuiz, onNavigate }: 
   const finalized = scores.filter((score) => score.status !== 'reviewing')
   const average = finalized.length ? Math.round(finalized.reduce((sum, score) => sum + score.score, 0) / finalized.length) : 0
   const current = assigned.find((quiz) => quiz.status === 'ready')
-  return <div className="content-stack"><section className="welcome-row"><div><div className="eyebrow eyebrow-accent"><Sparkles size={14} /> {currentDateLabel(now)}</div><h2>{currentGreeting(now)}, {displayName(student).split(' ')[0]}.</h2><p>Let&apos;s make a little progress toward finishing strong.</p></div><div className="term-pill"><span className="status-dot status-dot-green" /> Term recovery plan <ChevronDown size={15} /></div></section><section className={`student-overview-stats ${statsOpen ? 'is-open' : 'is-collapsed'}`}><div className="overview-stats-heading"><div><span className="eyebrow">At a glance</span><strong>Your progress</strong></div><button className="icon-button" onClick={() => setStatsOpen((value) => !value)} aria-expanded={statsOpen} aria-label={statsOpen ? 'Hide progress summary' : 'Show progress summary'}>{statsOpen ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</button></div>{statsOpen && <div className="student-stat-grid"><StatCard icon={<Clock3 size={19} />} label="Assigned quizzes" value={String(assigned.length)} detail={assigned.length ? `${assigned.length - completed} remaining` : 'Nothing assigned yet'} tone="lavender" /><StatCard icon={<BarChart3 size={19} />} label="Average score" value={finalized.length ? String(average) : '--'} detail={finalized.length ? 'Normalized average' : 'No finalized results'} tone="mint" /><StatCard icon={<CheckCheck size={19} />} label="Completed" value={`${completed} / ${assigned.length}`} detail={assigned.length ? `${Math.max(assigned.length - completed, 0)} remaining` : 'No assigned quizzes'} tone="peach" /></div>}</section>{current && <section className="featured-quiz-card compact-featured-quiz"><div className="featured-card-top"><div className="subject-badge"><BookOpen size={15} /> {current.subject}</div><span className="quiz-time"><Clock3 size={14} /> {current.durationMinutes} min</span></div><div className="featured-card-body"><div className="featured-card-copy"><span className="eyebrow eyebrow-light">Next up</span><h3>{current.title}</h3><p>{current.description || 'Your next assigned recovery assessment.'}</p>{current.reporters?.length ? <div className="featured-reporter-row"><AvatarStack people={current.reporters} label={`${current.reporters.length} quiz reporter${current.reporters.length === 1 ? '' : 's'}`} /><span>{current.reporters.length === 1 ? `Reporter: ${displayName(current.reporters[0])}` : `${current.reporters.length} reporters assigned`}</span></div> : null}</div><span className="featured-icon"><BookOpen size={31} /></span></div><div className="featured-card-bottom"><span className="quiz-progress-copy"><strong>{current.questions}</strong> questions to go</span><button className="button button-white" onClick={() => onOpenQuiz(current)}>Take quiz <ArrowRight size={15} /></button></div></section>}<section><div className="section-heading"><div><span className="eyebrow">Current uploads</span><h3>Your quizzes</h3></div><button className="text-button with-icon" onClick={() => onNavigate('quizzes')}>Show all quizzes <ArrowUpRight size={15} /></button></div>{assigned.length ? <div className="quiz-list dashboard-quiz-list">{assigned.slice(0, 4).map((quiz) => <StudentQuizCardV2 key={quiz.id} quiz={quiz} onOpen={onOpenQuiz} />)}</div> : <section className="quiz-library-empty"><span className="empty-state-icon"><FolderKanban size={22} /></span><strong>No assigned quizzes yet</strong><span>Your administrator will place current assessments here.</span></section>}</section></div>
+  return <div className="content-stack"><ReuploadRequestsBanner requests={reuploadRequests} onOpenReupload={onOpenReupload} /><section className="welcome-row"><div><div className="eyebrow eyebrow-accent"><Sparkles size={14} /> {currentDateLabel(now)}</div><h2>{currentGreeting(now)}, {displayName(student).split(' ')[0]}.</h2><p>Let&apos;s make a little progress toward finishing strong.</p></div><div className="term-pill"><span className="status-dot status-dot-green" /> Term recovery plan <ChevronDown size={15} /></div></section><section className={`student-overview-stats ${statsOpen ? 'is-open' : 'is-collapsed'}`}><div className="overview-stats-heading"><div><span className="eyebrow">At a glance</span><strong>Your progress</strong></div><button className="icon-button" onClick={() => setStatsOpen((value) => !value)} aria-expanded={statsOpen} aria-label={statsOpen ? 'Hide progress summary' : 'Show progress summary'}>{statsOpen ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</button></div>{statsOpen && <div className="student-stat-grid"><StatCard icon={<Clock3 size={19} />} label="Assigned quizzes" value={String(assigned.length)} detail={assigned.length ? `${assigned.length - completed} remaining` : 'Nothing assigned yet'} tone="lavender" /><StatCard icon={<BarChart3 size={19} />} label="Average score" value={finalized.length ? String(average) : '--'} detail={finalized.length ? 'Normalized average' : 'No finalized results'} tone="mint" /><StatCard icon={<CheckCheck size={19} />} label="Completed" value={`${completed} / ${assigned.length}`} detail={assigned.length ? `${Math.max(assigned.length - completed, 0)} remaining` : 'No assigned quizzes'} tone="peach" /></div>}</section>{current && <section className="featured-quiz-card compact-featured-quiz"><div className="featured-card-top"><div className="subject-badge"><BookOpen size={15} /> {current.subject}</div><span className="quiz-time"><Clock3 size={14} /> {current.durationMinutes} min</span></div><div className="featured-card-body"><div className="featured-card-copy"><span className="eyebrow eyebrow-light">Next up</span><h3>{current.title}</h3><p>{current.description || 'Your next assigned recovery assessment.'}</p>{current.reporters?.length ? <div className="featured-reporter-row"><AvatarStack people={current.reporters} label={`${current.reporters.length} quiz reporter${current.reporters.length === 1 ? '' : 's'}`} /><span>{current.reporters.length === 1 ? `Reporter: ${displayName(current.reporters[0])}` : `${current.reporters.length} reporters assigned`}</span></div> : null}</div><span className="featured-icon"><BookOpen size={31} /></span></div><div className="featured-card-bottom"><span className="quiz-progress-copy"><strong>{current.questions}</strong> questions to go</span><button className="button button-white" onClick={() => onOpenQuiz(current)}>Take quiz <ArrowRight size={15} /></button></div></section>}<section><div className="section-heading"><div><span className="eyebrow">Current uploads</span><h3>Your quizzes</h3></div><button className="text-button with-icon" onClick={() => onNavigate('quizzes')}>Show all quizzes <ArrowUpRight size={15} /></button></div>{assigned.length ? <div className="quiz-list dashboard-quiz-list">{assigned.slice(0, 4).map((quiz) => <StudentQuizCardV2 key={quiz.id} quiz={quiz} onOpen={onOpenQuiz} />)}</div> : <section className="quiz-library-empty"><span className="empty-state-icon"><FolderKanban size={22} /></span><strong>No assigned quizzes yet</strong><span>Your administrator will place current assessments here.</span></section>}</section></div>
+}
+
+function ReuploadRequestsBanner({ requests, onOpenReupload }: { requests: ReuploadRequest[]; onOpenReupload: (request: ReuploadRequest) => void }) {
+  const rows = reuploadBannerRows(requests)
+  if (!rows.length) return null
+  const requestsById = new Map(requests.map((request) => [request.id, request]))
+  return <section className="reupload-banner" aria-labelledby="reupload-banner-heading">
+    <div className="reupload-banner-head"><span className="reupload-banner-icon"><ImagePlus size={18} /></span><div><span className="eyebrow">Action needed</span><h3 id="reupload-banner-heading">Image re-upload needed</h3></div></div>
+    <ul className="reupload-banner-list">{rows.map((row) => <li key={row.id} className="reupload-banner-row"><div className="reupload-banner-copy"><strong>{row.quizTitle}</strong><span>{row.questionLabel} · {row.hasDeadline ? `Due ${row.deadlineLabel}` : row.deadlineLabel}</span></div><button className="button button-primary button-small" onClick={() => { const request = requestsById.get(row.id); if (request) onOpenReupload(request) }}>Re-upload image <ArrowRight size={14} /></button></li>)}</ul>
+  </section>
+}
+
+function StudentReuploadPage({ schoolId, requests, selectedReuploadId, onRefreshWorkspace, onBack, notify }: { schoolId: string; requests: ReuploadRequest[]; selectedReuploadId: string | null; onRefreshWorkspace: () => Promise<void>; onBack: () => void; notify: (toast: ToastMessage) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const page = reuploadPageState(requests, selectedReuploadId)
+
+  if (page.status !== 'open' || !page.request) {
+    return <section className="reupload-page"><button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to dashboard</button><div className="reupload-closed-card"><div className="result-burst reupload-closed-burst"><CircleAlert size={28} /></div><h2>This re-upload request is no longer open.</h2><p>Ask your administrator to open a new request if you still need to submit this image.</p><button className="button button-primary" onClick={onBack}>Back to dashboard <ArrowRight size={15} /></button></div></section>
+  }
+
+  const request = page.request
+  const inputId = `reupload-${request.id}`
+  const hintId = `${inputId}-hint`
+
+  if (done) {
+    return <section className="reupload-page"><div className="reupload-done-card" role="status"><div className="result-burst"><CheckCircle2 size={30} /></div><span className="eyebrow eyebrow-accent">Submission received</span><h2>Image received. Your teacher will review it.</h2><p>Your re-uploaded image for {request.questionLabel} of {request.quizTitle} was saved.</p><button className="button button-primary" onClick={onBack}>Back to dashboard <ArrowRight size={15} /></button></div></section>
+  }
+
+  const pick = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = '' // allow re-picking the same file
+    if (!file || busy) return
+    const fullRequest = requests.find((candidate) => candidate.id === request.id)
+    if (!fullRequest) return
+    setError(null)
+    setBusy(true)
+    void submitReupload({ request: fullRequest, schoolId, file }).then(async (result) => {
+      if (result.error) {
+        const message = (result.error as Error)?.message ?? 'The image could not be uploaded.'
+        setError(message)
+        notify({ tone: 'warning', title: 'Image not uploaded', message })
+        setBusy(false)
+        return
+      }
+      setDone(true)
+      setBusy(false)
+      notify({ tone: 'success', title: 'Image received', message: 'Your teacher will review it.' })
+      await onRefreshWorkspace()
+    }).catch((caught: Error) => {
+      setError(caught.message)
+      notify({ tone: 'warning', title: 'Image not uploaded', message: caught.message })
+      setBusy(false)
+    })
+  }
+
+  return <section className="reupload-page"><button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to dashboard</button>
+    <div className="reupload-card">
+      <div className="reupload-card-head"><span className="eyebrow eyebrow-accent">{request.quizTitle}</span><h2>{request.questionLabel}</h2><p className="reupload-prompt">{request.prompt}</p></div>
+      <dl className="reupload-meta"><div><dt>Original file</dt><dd>Original file: {request.originalFileName}</dd></div><div><dt>Deadline</dt><dd>{request.hasDeadline ? `Due ${request.deadlineLabel}` : request.deadlineLabel}</dd></div></dl>
+      <div className="upload-answer reupload-upload"><label className="upload-dropzone" htmlFor={inputId}><div className="upload-icon">{busy ? <LoaderCircle className="spin" size={23} /> : <FileUp size={23} />}</div><strong>{busy ? 'Uploading…' : 'Choose your image'}</strong><span id={hintId}>{UPLOAD_HINT}</span><input id={inputId} type="file" accept={UPLOAD_ACCEPT} aria-describedby={hintId} disabled={busy} onChange={pick} /></label>{busy && <p className="upload-status" role="status" aria-live="polite">Uploading…</p>}{error && <p className="upload-error" role="alert"><CircleAlert size={14} /> {error}</p>}</div>
+    </div>
+  </section>
 }
 
 function StudentQuizzesPage({ quizzes, onOpenQuiz }: { quizzes: Quiz[]; onOpenQuiz: (quiz: Quiz) => void }) {
@@ -1642,10 +1821,10 @@ function QuizReview({ answers, questions, onJump, onBack, onSubmit }: { answers:
   return <div className="review-panel"><div className="review-heading"><span className="eyebrow eyebrow-accent">Final check</span><h2>Review every answer</h2><p>Each question is shown in full. Your response appears beneath it.</p></div>{unanswered > 0 && <div className="review-alert"><CircleAlert size={18} /><span><strong>{unanswered} unanswered.</strong> You can still go back.</span></div>}<div className="review-list review-question-list">{questions.map((question, index) => <article key={question.id} className="review-question-card"><div className="review-question-heading"><span className={`review-number ${answers[question.id] ? 'answered' : ''}`}>{answers[question.id] ? <Check size={14} /> : index + 1}</span><div><span className="eyebrow">Question {index + 1} · {question.points} pts</span><h3>{question.prompt}</h3></div><button className="button button-ghost" onClick={() => onJump(index)}>Edit answer</button></div><div className={`review-answer ${answers[question.id] ? '' : 'empty'}`}><span>Your answer</span><strong>{(question.type === 'upload' ? uploadDisplayName(answers[question.id], uploadedFileNames.get(answers[question.id] ?? '')) : answers[question.id]) || 'No answer yet'}</strong></div></article>)}</div><div className="review-actions"><button className="button button-secondary" onClick={onBack}><ArrowLeft size={16} /> Keep answering</button><button className="button button-primary" onClick={() => setConfirmSubmit(true)}>Submit quiz <Send size={15} /></button></div>{confirmSubmit && <ConfirmModal title="Submit your quiz?" message={unanswered ? `${unanswered} question${unanswered === 1 ? ' is' : 's are'} unanswered. You cannot change answers after submission.` : 'You will not be able to change your answers after submission.'} confirmLabel="Submit quiz" onCancel={() => setConfirmSubmit(false)} onConfirm={() => { setConfirmSubmit(false); onSubmit() }} />}</div>
 }
 
-function StudentScoresPage({ quizzes, scores, onOpenQuiz }: { quizzes: Quiz[]; scores: ScoreRecord[]; onOpenQuiz: (quiz: Quiz) => void }) {
+function StudentScoresPage({ quizzes, scores, reuploadRequests, onOpenReupload, onOpenQuiz }: { quizzes: Quiz[]; scores: ScoreRecord[]; reuploadRequests: ReuploadRequest[]; onOpenReupload: (request: ReuploadRequest) => void; onOpenQuiz: (quiz: Quiz) => void }) {
   const average = scores.length ? Math.round(scores.reduce((sum, score) => sum + score.score, 0) / scores.length) : 0
   const nextQuiz = quizzes.find((quiz) => quiz.status === 'ready')
-  return <div className="content-stack"><section className="page-intro-row"><div><span className="eyebrow">Progress history</span><h2>A record of your effort.</h2><p>Every attempt is a useful signal. Keep building from here.</p></div><div className="score-summary-chip"><span className="score-summary-ring">{scores.length ? average : '--'}</span><div><strong>Current average</strong><span>{scores.length ? `Across ${scores.length} finalized results` : 'No finalized results yet'}</span></div></div></section><section className="score-overview-grid"><div className="score-overview-card"><div className="section-heading"><div><span className="eyebrow">Term performance</span><h3>{scores.length ? 'Your recorded scores' : 'Your first result starts here'}</h3></div></div><div className="score-chart"><div className="chart-y-labels"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div><div className="chart-area"><div className="chart-grid-lines"><i /><i /><i /><i /><i /></div><div className="chart-bars">{(scores.length ? scores.slice(-6).map((score) => score.score) : [0]).map((value, index) => <span key={index} className={index === (scores.length ? Math.min(scores.length, 6) - 1 : 0) ? 'bar-current' : ''} style={{ height: `${Math.max(value, 8)}%` }}><b>{value}</b></span>)}</div><div className="chart-x-labels"><span>Recent</span><span>Results</span></div></div></div></div><div className="score-overview-card goal-card"><div className="goal-icon"><Target size={20} /></div><span className="eyebrow">Your term goal</span><h3>Pass every recovery quiz</h3><p>{nextQuiz ? 'You have an assigned quiz ready for your next focused session.' : 'Your current recovery plan is complete or waiting for an assignment.'}</p><div className="goal-progress"><div><span>{scores.filter((score) => score.status === 'passed').length} passed</span><strong>{scores.length ? `${average} avg` : '--'}</strong></div><div className="progress-track"><span style={{ width: `${Math.min(average, 100)}%` }} /></div></div></div></section><section className="table-card"><div className="table-card-heading"><div><span className="eyebrow">Score history</span><h3>{scores.length ? 'Finalized results' : 'No finalized scores yet'}</h3></div>{nextQuiz && <button className="button button-primary button-small" onClick={() => onOpenQuiz(nextQuiz)}>Take next quiz <ArrowRight size={14} /></button>}</div>{scores.length ? <div className="score-table"><div className="score-table-head"><span>Assessment</span><span>Date</span><span>Score</span><span>Status</span><span /></div>{scores.map((record) => <ScoreRowV2 key={record.id} record={record} />)}</div> : <div className="empty-state"><BarChart3 size={24} /><strong>Your results will appear here</strong><span>Complete an assigned quiz to start building your history.</span></div>}</section></div>
+  return <div className="content-stack"><ReuploadRequestsBanner requests={reuploadRequests} onOpenReupload={onOpenReupload} /><section className="page-intro-row"><div><span className="eyebrow">Progress history</span><h2>A record of your effort.</h2><p>Every attempt is a useful signal. Keep building from here.</p></div><div className="score-summary-chip"><span className="score-summary-ring">{scores.length ? average : '--'}</span><div><strong>Current average</strong><span>{scores.length ? `Across ${scores.length} finalized results` : 'No finalized results yet'}</span></div></div></section><section className="score-overview-grid"><div className="score-overview-card"><div className="section-heading"><div><span className="eyebrow">Term performance</span><h3>{scores.length ? 'Your recorded scores' : 'Your first result starts here'}</h3></div></div><div className="score-chart"><div className="chart-y-labels"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div><div className="chart-area"><div className="chart-grid-lines"><i /><i /><i /><i /><i /></div><div className="chart-bars">{(scores.length ? scores.slice(-6).map((score) => score.score) : [0]).map((value, index) => <span key={index} className={index === (scores.length ? Math.min(scores.length, 6) - 1 : 0) ? 'bar-current' : ''} style={{ height: `${Math.max(value, 8)}%` }}><b>{value}</b></span>)}</div><div className="chart-x-labels"><span>Recent</span><span>Results</span></div></div></div></div><div className="score-overview-card goal-card"><div className="goal-icon"><Target size={20} /></div><span className="eyebrow">Your term goal</span><h3>Pass every recovery quiz</h3><p>{nextQuiz ? 'You have an assigned quiz ready for your next focused session.' : 'Your current recovery plan is complete or waiting for an assignment.'}</p><div className="goal-progress"><div><span>{scores.filter((score) => score.status === 'passed').length} passed</span><strong>{scores.length ? `${average} avg` : '--'}</strong></div><div className="progress-track"><span style={{ width: `${Math.min(average, 100)}%` }} /></div></div></div></section><section className="table-card"><div className="table-card-heading"><div><span className="eyebrow">Score history</span><h3>{scores.length ? 'Finalized results' : 'No finalized scores yet'}</h3></div>{nextQuiz && <button className="button button-primary button-small" onClick={() => onOpenQuiz(nextQuiz)}>Take next quiz <ArrowRight size={14} /></button>}</div>{scores.length ? <div className="score-table"><div className="score-table-head"><span>Assessment</span><span>Date</span><span>Score</span><span>Status</span><span /></div>{scores.map((record) => <ScoreRowV2 key={record.id} record={record} />)}</div> : <div className="empty-state"><BarChart3 size={24} /><strong>Your results will appear here</strong><span>Complete an assigned quiz to start building your history.</span></div>}</section></div>
 }
 
 function ScoreRowV2({ record }: { record: ScoreRecord }) {

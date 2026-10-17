@@ -1,8 +1,9 @@
 import { supabase } from './supabase'
 import { sortStudents } from './sorting'
 import { signedAvatarUrl } from './profile'
+import { loadMyReuploadRequests } from './reuploads'
 import { toKeyList } from '../../supabase/functions/_shared/answerKeys.ts'
-import type { Notification, PartScore, Question, Quiz, QuizPart, QuizReporter, ScoreRecord, Student, Subject } from '../types'
+import type { Notification, PartScore, Question, Quiz, QuizPart, QuizReporter, ReuploadRequest, ScoreRecord, Student, Subject } from '../types'
 
 type QuizRow = {
   id: string
@@ -142,7 +143,7 @@ function mapAdminQuizStatus(status: QuizRow['status']): Quiz['status'] {
 }
 
 export async function loadStudentWorkspace(schoolId: string) {
-  if (!supabase) return { quizzes: [], scores: [] as ScoreRecord[] }
+  if (!supabase) return { quizzes: [], scores: [] as ScoreRecord[], reuploadRequests: [] as ReuploadRequest[] }
 
   const [{ data: quizRows, error: quizError }, { data: assignments, error: assignmentError }] = await Promise.all([
     supabase.from('LQ_quizzes').select('id, title, subject, description, duration_seconds, passing_score, status').eq('status', 'published').order('created_at', { ascending: false }),
@@ -314,7 +315,17 @@ export async function loadStudentWorkspace(schoolId: string) {
       }
     })
 
-  return { quizzes: mappedQuizzes, scores }
+  // Open re-upload requests power the student banner. A failure here must not
+  // break the dashboard, so log and fall back to an empty list.
+  let reuploadRequests: ReuploadRequest[] = []
+  try {
+    reuploadRequests = await loadMyReuploadRequests()
+  } catch (error) {
+    console.error('Failed to load re-upload requests', error)
+    reuploadRequests = []
+  }
+
+  return { quizzes: mappedQuizzes, scores, reuploadRequests }
 }
 
 export async function loadAdminQuizzes() {

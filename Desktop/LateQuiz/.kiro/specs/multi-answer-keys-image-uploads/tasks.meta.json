@@ -225,6 +225,16 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792170648048
+      },
+      {
+        "executionId": "de74f6cf-0ec7-4d33-88e9-ce2c4f3439d9",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792224380398
+      },
+      {
+        "executionId": "de74f6cf-0ec7-4d33-88e9-ce2c4f3439d9",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792225209181
       }
     ],
     "3.12 Update types and data loading for re-upload requests": [
@@ -232,6 +242,21 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164339611
+      },
+      {
+        "executionId": "de74f6cf-0ec7-4d33-88e9-ce2c4f3439d9",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792225223530
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792225477794
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792226499659
       }
     ],
     "3.13 Add the student banner and re-upload page in `src/App.tsx`": [
@@ -239,6 +264,16 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164339899
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792226505892
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792227554058
       }
     ],
     "3.14 Add admin re-upload controls, badge, and notification click-through in `src/App.tsx`": [
@@ -246,6 +281,16 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164340214
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792227559382
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792228326667
       }
     ],
     "3.15 Add the env-gated end-to-end suite": [
@@ -253,6 +298,16 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164340545
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792228335462
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792229151623
       }
     ],
     "3.16 Verify bug condition exploration test now passes": [
@@ -260,6 +315,11 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164340890
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792229311970
       }
     ],
     "3.17 Verify preservation tests still pass": [
@@ -267,6 +327,11 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164341204
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792229318951
       }
     ],
     "4. Checkpoint - Ensure all tests pass": [
@@ -274,6 +339,23 @@
         "executionId": "1e1e43c0-3825-4db1-839b-1a16ed6c9f7a",
         "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
         "timestamp": 1792164341517
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792229331071
+      },
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792229587982
+      }
+    ],
+    "3. Fix multiple identification answer keys, real image uploads, and legacy upload re-upload": [
+      {
+        "executionId": "541a4870-46f8-4526-8c3b-399b5cb6c9e8",
+        "chatSessionId": "sess_e5a44e05-4f51-4279-b083-00beb80a2d87",
+        "timestamp": 1792229319506
       }
     ]
   }

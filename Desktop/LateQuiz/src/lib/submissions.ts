@@ -3,8 +3,9 @@ import { compareStudents } from './sorting'
 import { toKeyList } from '../../supabase/functions/_shared/answerKeys.ts'
 import { listAttemptObjectPaths, SUBMISSION_BUCKET } from './submissionUploads'
 import { collectDeletePaths } from './submissionReview'
+import { effectiveReuploadStatus, isAwaitingImageReview, mapReuploadRequestRow } from './reuploads'
 import { uploadDisplayName } from './uploadAnswer'
-import type { PartScore, QuestionType, Student, Submission, SubmissionAnswer, SubmissionPartColumn } from '../types'
+import type { AttemptStatus, PartScore, QuestionType, ReuploadRequestRecord, Student, Submission, SubmissionAnswer, SubmissionPartColumn, SubmissionReupload } from '../types'
 
 type AttemptRow = {
   id: string
@@ -46,6 +47,22 @@ type AnswerRow = {
   file_path: string | null
   is_correct: boolean | null
   points_awarded: number
+  reviewed_at: string | null
+}
+
+type ReuploadRequestRow = {
+  id: string
+  attempt_id: string
+  question_id: string
+  answer_id: string
+  original_file_name: string | null
+  requested_at: string
+  deadline: string | null
+  status: 'open' | 'fulfilled' | 'cancelled'
+  fulfilled_at: string | null
+  fulfilled_path: string | null
+  cancelled_at: string | null
+  cancel_reason: 'admin' | 'expired' | null
 }
 
 type PartRow = {
@@ -92,7 +109,27 @@ function mapPartScore(row: PartRow): PartScore {
   }
 }
 
-function mapAnswer(question: QuestionRow, answer?: AnswerRow, answerKeys: string[] = []): SubmissionAnswer {
+/** Maps the latest re-upload request for an answer into the drawer's slot. */
+function mapReupload(answer: AnswerRow | undefined, latest: ReuploadRequestRecord | undefined, now: Date): SubmissionReupload | null {
+  if (!latest) return null
+  return {
+    id: latest.id,
+    status: effectiveReuploadStatus(latest, now),
+    deadline: latest.deadline,
+    requestedAt: latest.requestedAt,
+    fulfilledAt: latest.fulfilledAt,
+    originalFileName: latest.originalFileName,
+    awaitingReview: isAwaitingImageReview({ reviewedAt: answer?.reviewed_at ?? null }, latest),
+  }
+}
+
+function mapAnswer(
+  question: QuestionRow,
+  answer: AnswerRow | undefined,
+  answerKeys: string[] = [],
+  latestRequest?: ReuploadRequestRecord,
+  now: Date = new Date(),
+): SubmissionAnswer {
   return {
     id: answer?.id,
     questionId: question.id,
@@ -105,6 +142,8 @@ function mapAnswer(question: QuestionRow, answer?: AnswerRow, answerKeys: string
     pointsAwarded: Number(answer?.points_awarded ?? 0),
     isCorrect: answer?.is_correct ?? null,
     requiresReview: question.requires_manual_review || question.question_type === 'essay' || question.question_type === 'upload',
+    answerId: answer?.id,
+    reupload: mapReupload(answer, latestRequest, now),
   }
 }
 
@@ -141,7 +180,7 @@ export async function loadAdminSubmissions() {
      { data: quizPartRows, error: quizPartError },
   ] = await Promise.all([
     supabase.from('LQ_questions').select('id, quiz_id, position, part_id, question_type, prompt, points, requires_manual_review').in('quiz_id', quizIds),
-    supabase.from('LQ_answers').select('id, attempt_id, question_id, answer_text, file_path, is_correct, points_awarded').in('attempt_id', attemptIds),
+    supabase.from('LQ_answers').select('id, attempt_id, question_id, answer_text, file_path, is_correct, points_awarded, reviewed_at').in('attempt_id', attemptIds),
     supabase.from('LQ_attempt_part_scores').select('attempt_id, part_id, part_title, position, points_possible, auto_points, final_points').in('attempt_id', attemptIds).order('position'),
     supabase.from('LQ_quiz_parts').select('id, quiz_id, title, position').in('quiz_id', quizIds).order('position'),
   ])
@@ -158,6 +197,21 @@ export async function loadAdminSubmissions() {
   if (keyError) throw keyError
 
   const answerKeys = new Map(((keyRows ?? []) as Array<{ question_id: string; answer_keys: string[] | null }>).map((row) => [row.question_id, toKeyList(row)]))
+
+  const { data: reuploadRows, error: reuploadError } = await supabase
+    .from('LQ_reupload_requests')
+    .select('id, attempt_id, question_id, answer_id, original_file_name, requested_at, deadline, status, fulfilled_at, fulfilled_path, cancelled_at, cancel_reason')
+    .in('attempt_id', attemptIds)
+    .order('requested_at', { ascending: true })
+  if (reuploadError) throw reuploadError
+
+  // Latest request per answer (rows arrive oldest-first, so the last write wins).
+  const latestRequestByAnswer = new Map<string, ReuploadRequestRecord>()
+  for (const row of (reuploadRows ?? []) as ReuploadRequestRow[]) {
+    latestRequestByAnswer.set(row.answer_id, mapReuploadRequestRow(row))
+  }
+
+  const now = new Date()
 
   const questionsByQuiz = new Map<string, QuestionRow[]>()
   for (const question of (questionRows ?? []) as QuestionRow[]) {
@@ -204,7 +258,12 @@ export async function loadAdminSubmissions() {
     const roster = rosters.get(attempt.school_id)
     const questions = questionsByQuiz.get(attempt.quiz_id) ?? []
     const answers = answersByAttempt.get(attempt.id) ?? new Map<string, AnswerRow>()
-    const mappedAnswers = questions.map((question) => mapAnswer(question, answers.get(question.id), answerKeys.get(question.id)))
+    const mappedAnswers = questions.map((question) => {
+      const answer = answers.get(question.id)
+      const latestRequest = answer?.id ? latestRequestByAnswer.get(answer.id) : undefined
+      return mapAnswer(question, answer, answerKeys.get(question.id), latestRequest, now)
+    })
+    const hasImageAwaitingReview = mappedAnswers.some((answer) => answer.reupload?.awaitingReview === true)
     const parts = partsByAttempt.get(attempt.id) ?? []
     const partColumns = [...(partColumnsByQuiz.get(attempt.quiz_id) ?? [])]
     const questionPartIds = new Set(questions.map((question) => question.part_id ?? '__general'))
@@ -247,6 +306,8 @@ export async function loadAdminSubmissions() {
       possiblePoints,
       timeTakenSeconds: attempt.time_taken_seconds === null || attempt.time_taken_seconds === undefined ? null : Number(attempt.time_taken_seconds),
       submissionReason: attempt.submission_reason,
+      attemptStatus: attempt.status as AttemptStatus,
+      hasImageAwaitingReview,
       answers: mappedAnswers,
       partColumns,
       parts,
