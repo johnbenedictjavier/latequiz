@@ -1,10 +1,9 @@
 /**
  * Unit tests for notificationTarget routing (task 3.14).
  *
- * - `reupload_fulfilled` opens the submissions view focused on the attempt.
- * - `submission_received` and `password_reset_request` keep today's students-page
- *   routing (also asserted by tests/reuploadPreservation.test.ts; this file must
- *   not weaken that behavior).
+ * - `reupload_fulfilled` and `submission_received` open the submissions view
+ *   focused on the attempt and filtered to the student.
+ * - `password_reset_request` keeps today's students-page routing.
  *
  * Validates: Requirements 3.24, 3.25
  */
@@ -30,9 +29,14 @@ describe('notificationTarget', () => {
       .toEqual({ view: 'submissions', focusStudentId: null, focusAttemptId: null })
   })
 
-  it('keeps submission_received on the students page focused on school_id', () => {
+  it('routes submission_received to the submissions view focused on the attempt and student', () => {
     expect(notificationTarget(notification('submission_received', { school_id: 'S-1001', attempt_id: 'attempt-9' })))
-      .toEqual({ view: 'students', focusStudentId: 'S-1001', focusAttemptId: null })
+      .toEqual({ view: 'submissions', focusStudentId: 'S-1001', focusAttemptId: 'attempt-9' })
+  })
+
+  it('routes submission_received to submissions with null focus when metadata is missing', () => {
+    expect(notificationTarget(notification('submission_received')))
+      .toEqual({ view: 'submissions', focusStudentId: null, focusAttemptId: null })
   })
 
   it('keeps password_reset_request on the students page focused on school_id', () => {

@@ -285,13 +285,18 @@ describe('Preservation: submission_received payload (3.24)', () => {
 describe('Preservation: notification routing (3.24, 3.25)', () => {
   const base = { id: 'n-1', title: 'T', message: 'M', readAt: null, createdAt: '2026-10-20T08:00:00.000Z' }
 
-  it.each(['submission_received', 'password_reset_request'])('%s opens the students page focused on metadata.school_id', (type) => {
-    expect(notificationTarget({ ...base, type, metadata: { school_id: SCHOOL_ID, attempt_id: ATTEMPT_ID } }))
+  it('password_reset_request opens the students page focused on metadata.school_id', () => {
+    expect(notificationTarget({ ...base, type: 'password_reset_request', metadata: { school_id: SCHOOL_ID, attempt_id: ATTEMPT_ID } }))
       .toMatchObject({ view: 'students', focusStudentId: SCHOOL_ID })
   })
 
-  it.each(['submission_received', 'password_reset_request'])('%s without metadata opens the students page with no focus', (type) => {
-    expect(notificationTarget({ ...base, type })).toMatchObject({ view: 'students', focusStudentId: null })
+  it('password_reset_request without metadata opens the students page with no focus', () => {
+    expect(notificationTarget({ ...base, type: 'password_reset_request' })).toMatchObject({ view: 'students', focusStudentId: null })
+  })
+
+  it('submission_received opens the submissions page focused on the attempt and student', () => {
+    expect(notificationTarget({ ...base, type: 'submission_received', metadata: { school_id: SCHOOL_ID, attempt_id: ATTEMPT_ID } }))
+      .toMatchObject({ view: 'submissions', focusStudentId: SCHOOL_ID, focusAttemptId: ATTEMPT_ID })
   })
 })
 

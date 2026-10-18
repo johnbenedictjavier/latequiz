@@ -987,13 +987,16 @@ h1, h2, h3 { letter-spacing: -0.035em; }
 .notification-heading { display: flex; align-items: center; justify-content: space-between; padding: 14px 15px; border-bottom: 1px solid #eff0f4; }
 .notification-heading strong { color: #59627c; font-size: 12px; }
 .notification-heading span { color: #9da5b5; font-size: 9px; }
-.notification-row { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 11px 13px; border-bottom: 1px solid #f0f1f5; background: #fff; text-align: left; }
+.notification-row { display: flex; align-items: stretch; width: 100%; border-bottom: 1px solid #f0f1f5; background: #fff; }
 .notification-row:hover, .notification-row.unread { background: #faf9ff; }
+.notification-row-main { display: flex; flex: 1; align-items: flex-start; gap: 9px; min-width: 0; padding: 11px 13px; background: transparent; text-align: left; }
 .notification-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 auto; border-radius: 8px; color: var(--peach); background: var(--peach-soft); }
-.notification-row > span:last-child { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.notification-row-main > span:last-child { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .notification-row strong { color: #59627c; font-size: 10px; }
 .notification-row small { color: #8e97aa; font-size: 9px; line-height: 1.4; }
 .notification-row time { color: #b0b6c4; font-size: 8px; }
+.notification-delete { flex: 0 0 auto; align-self: center; margin-right: 8px; color: #b0b6c4; }
+.notification-delete:hover { color: var(--danger, #d6455b); }
 .notification-empty { padding: 28px 15px; color: #9da5b5; font-size: 10px; text-align: center; }
 
 /* Notifications */

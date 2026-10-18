@@ -502,3 +502,9 @@ export async function markNotificationRead(id: string) {
   const { error } = await supabase.from('LQ_notifications').update({ read_at: new Date().toISOString() }).eq('id', id)
   return { error }
 }
+
+export async function deleteNotification(id: string) {
+  if (!supabase) return { error: new Error('Supabase is not configured.') }
+  const { error } = await supabase.from('LQ_notifications').delete().eq('id', id)
+  return { error }
+}

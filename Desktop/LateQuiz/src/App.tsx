@@ -65,7 +65,7 @@ import { cancelReupload, requestReupload } from './lib/reuploads'
 import { drawerReuploadState } from './lib/drawerReupload'
 import { answerKeyDisplay, NO_FIXED_ANSWER } from './lib/submissionReview'
 import { SubmissionImage } from './components/SubmissionImage'
-import { createSubject, loadAdminAssignments, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
+import { createSubject, deleteNotification, loadAdminAssignments, loadAdminNotifications, loadAdminQuizzes, loadAdminRoster, loadStudentWorkspace, loadSubjects, markNotificationRead } from './lib/workspace'
 import type { AdminView, Notification, Question, Quiz, QuizPart, QuizReporter, ReuploadRequest, Role, ScoreRecord, Student, StudentView, Subject, Submission, SubmissionAnswer, SubmissionAssignment, SubmissionDashboardCategory, SubmissionPartColumn, ToastMessage } from './types'
 import latequizLogo from '../latequiz.png'
 
@@ -528,10 +528,20 @@ function LegacyAdminApp({ view, quizzes, builderQuiz, isBuilderNew, onNavigate, 
     onNavigate(target.view)
   }
 
+  const handleDeleteNotification = async (id: string) => {
+    const previous = notifications
+    setNotifications((items) => items.filter((item) => item.id !== id))
+    const result = await deleteNotification(id)
+    if (result.error) {
+      setNotifications(previous)
+      notify({ tone: 'warning', title: 'Could not delete notification', message: result.error.message })
+    }
+  }
+
   const title = view === 'overview' ? `${currentGreeting(now)}, admin` : view === 'quizzes' ? 'Manage quizzes' : view === 'builder' ? (isBuilderNew ? 'Create a new quiz' : 'Edit quiz') : view === 'submissions' ? 'Student submissions' : 'Manage students'
   const eyebrow = view === 'overview' ? 'Admin workspace' : view === 'quizzes' ? 'Assessment library' : view === 'builder' ? 'Quiz studio' : view === 'submissions' ? 'Review queue' : 'Roster and access'
   const unread = notifications.filter((item) => !item.readAt).length
-  return <div className="app-shell admin-shell"><Sidebar role="admin" active={view} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as AdminView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><NotificationCenter notifications={notifications} unread={unread} onOpen={handleNotification} /><div className="admin-avatar">A</div></div></header><main className="page-content">{view === 'overview' && <AdminOverviewPage quizzes={quizzes} onNavigate={onNavigate} />}{view === 'quizzes' && <AdminQuizzes quizzes={quizzes} onStartBuilder={onStartBuilder} onRefresh={onRefreshQuizzes} notify={notify} />}{view === 'builder' && <AdminBuilderWorkspace key={builderQuiz?.id ?? 'new'} isNew={isBuilderNew} quiz={builderQuiz} onNavigate={onNavigate} onSaved={async () => { await onRefreshQuizzes(); onNavigate('quizzes') }} notify={notify} />}{view === 'submissions' && <AdminSubmissions quizzes={quizzes} notify={notify} focusAttemptId={focusAttemptId} />}{view === 'students' && <AdminStudentsPage focusStudentId={focusStudentId} notify={notify} />}</main></div></div>
+  return <div className="app-shell admin-shell"><Sidebar role="admin" active={view} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} onNavigate={(next) => onNavigate(next as AdminView)} onLogout={onLogout} /><div className="app-main"><header className="topbar"><button className="mobile-menu-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Toggle navigation">{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button><div className="topbar-heading"><span>{eyebrow}</span><h1>{title}</h1></div><div className="topbar-actions"><NotificationCenter notifications={notifications} unread={unread} onOpen={handleNotification} onDelete={handleDeleteNotification} /><div className="admin-avatar">A</div></div></header><main className="page-content">{view === 'overview' && <AdminOverviewPage quizzes={quizzes} onNavigate={onNavigate} />}{view === 'quizzes' && <AdminQuizzes quizzes={quizzes} onStartBuilder={onStartBuilder} onRefresh={onRefreshQuizzes} notify={notify} />}{view === 'builder' && <AdminBuilderWorkspace key={builderQuiz?.id ?? 'new'} isNew={isBuilderNew} quiz={builderQuiz} onNavigate={onNavigate} onSaved={async () => { await onRefreshQuizzes(); onNavigate('quizzes') }} notify={notify} />}{view === 'submissions' && <AdminSubmissions quizzes={quizzes} notify={notify} focusAttemptId={focusAttemptId} focusStudentId={focusStudentId} />}{view === 'students' && <AdminStudentsPage focusStudentId={focusStudentId} notify={notify} />}</main></div></div>
 }
 
 function LegacySidebar({ role, active, onNavigate, onLogout, student, mobileOpen, onClose }: { role: Role; active: string; onNavigate: (view: string) => void; onLogout: () => void; student?: Student; mobileOpen: boolean; onClose: () => void }) {
@@ -1193,7 +1203,7 @@ function SubmissionReportModal({ quiz, entries, onClose }: { quiz: Quiz; entries
   return <div className="modal-overlay" onClick={onClose}><section className="submission-report-modal" role="dialog" aria-modal="true" aria-labelledby="submission-report-title" onClick={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow eyebrow-accent">Score report</span><h2 id="submission-report-title">{quiz.title}</h2><p>Part scores and totals for the selected quiz.</p></div><button className="icon-button" onClick={onClose} aria-label="Close score report"><X size={18} /></button></div><div className="submission-report-summary"><span><strong>{entries.length}</strong> assigned</span><span><strong>{activeSubmissions.length}</strong> submitted</span><span><strong>{Math.max(entries.length - submissions.length, 0)}</strong> not started</span></div><div className="submission-report-table-wrap"><div className="submission-report-head" style={{ gridTemplateColumns }}><span>Student</span>{columns.map((column) => <span key={`${column.partId ?? 'general'}-${column.position}`}>{column.title}<small>{formatSubmissionPoints(column.possiblePoints)} pts</small></span>)}<span>Total score</span></div><div className="submission-report-body">{entries.length ? entries.map((entry) => { const submission = entry.submission; return <div className="submission-report-row" style={{ gridTemplateColumns }} key={`${entry.student.schoolId}-${entry.quizTitle}`}><div className="submission-report-student"><strong>{submissionFullName(entry.student)}</strong><small>{entry.student.schoolId}</small></div>{columns.map((column) => <span className="submission-report-cell submission-report-part" data-label={column.title} key={`${entry.student.schoolId}-${column.partId ?? 'general'}`}>{submission ? compactPartScore(submission, column) : '—'}</span>)}<div className={`submission-report-total ${submission ? '' : 'is-pending'}`}><strong>{submission ? `${formatSubmissionPoints(submission.earnedPoints)} / ${formatSubmissionPoints(submission.possiblePoints)}` : 'Not started'}</strong><small>{submission ? submission.score !== null ? `${submission.score}%` : submissionStatusLabel(submission.status) : 'No submission yet'}</small></div></div> }) : <div className="empty-state"><ClipboardCheck size={22} /><strong>No assigned students</strong><span>Assign students to this quiz to build a score report.</span></div>}</div></div><div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Close</button></div></section></div>
 }
 
-function AdminSubmissions({ quizzes, notify, focusAttemptId }: { quizzes: Quiz[]; notify: (toast: ToastMessage) => void; focusAttemptId?: string | null }) {
+function AdminSubmissions({ quizzes, notify, focusAttemptId, focusStudentId }: { quizzes: Quiz[]; notify: (toast: ToastMessage) => void; focusAttemptId?: string | null; focusStudentId?: string | null }) {
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [assignments, setAssignments] = useState<SubmissionAssignment[]>([])
   const [students, setStudents] = useState<Student[]>([])
@@ -1220,7 +1230,16 @@ function AdminSubmissions({ quizzes, notify, focusAttemptId }: { quizzes: Quiz[]
   }
 
   useEffect(() => { void refresh() }, [])
-  // Opening a "re-uploaded image received" notification focuses that attempt's drawer.
+  // Opening a submission or re-upload notification filters the list to that student so only
+  // their submissions show. The quiz/status filters reset so the student's row isn't hidden.
+  useEffect(() => {
+    if (!focusStudentId) return
+    setSearch(focusStudentId)
+    setFilter('all')
+    setQuizFilter('all')
+    setDashboardCategory(null)
+  }, [focusStudentId])
+  // Opening a "re-uploaded image received" or "submission received" notification focuses that attempt's drawer.
   useEffect(() => {
     if (!focusAttemptId) return
     const match = submissions.find((submission) => submission.id === focusAttemptId)
@@ -1465,9 +1484,9 @@ function AuthLoadingScreen() {
   return <main className="auth-loading-screen" aria-busy="true"><Brand /><span>Restoring your workspace...</span></main>
 }
 
-function NotificationCenter({ notifications, unread, onOpen }: { notifications: Notification[]; unread: number; onOpen: (notification: Notification) => void }) {
+function NotificationCenter({ notifications, unread, onOpen, onDelete }: { notifications: Notification[]; unread: number; onOpen: (notification: Notification) => void; onDelete: (id: string) => void }) {
   const [open, setOpen] = useState(false)
-  return <div className="notification-anchor"><button className="icon-button notification-button" aria-label="Notifications" onClick={() => setOpen((value) => !value)}><Bell size={19} />{unread > 0 && <span>{unread > 9 ? '9+' : unread}</span>}</button>{open && <div className="notification-popover"><div className="notification-heading"><strong>Notifications</strong><span>{unread ? `${unread} unread` : 'All caught up'}</span></div>{notifications.length ? notifications.map((notification) => <button key={notification.id} className={`notification-row ${notification.readAt ? '' : 'unread'}`} onClick={() => { setOpen(false); onOpen(notification) }}><span className="notification-icon"><CircleAlert size={15} /></span><span><strong>{notification.title}</strong><small>{notification.message}</small><time>{new Date(notification.createdAt).toLocaleString()}</time></span></button>) : <div className="notification-empty">No notifications yet.</div>}</div>}</div>
+  return <div className="notification-anchor"><button className="icon-button notification-button" aria-label="Notifications" onClick={() => setOpen((value) => !value)}><Bell size={19} />{unread > 0 && <span>{unread > 9 ? '9+' : unread}</span>}</button>{open && <div className="notification-popover"><div className="notification-heading"><strong>Notifications</strong><span>{unread ? `${unread} unread` : 'All caught up'}</span></div>{notifications.length ? notifications.map((notification) => <div key={notification.id} className={`notification-row ${notification.readAt ? '' : 'unread'}`}><button className="notification-row-main" onClick={() => { setOpen(false); onOpen(notification) }}><span className="notification-icon"><CircleAlert size={15} /></span><span><strong>{notification.title}</strong><small>{notification.message}</small><time>{new Date(notification.createdAt).toLocaleString()}</time></span></button><button className="icon-button notification-delete" aria-label="Delete notification" title="Delete notification" onClick={() => onDelete(notification.id)}><Trash2 size={15} /></button></div>) : <div className="notification-empty">No notifications yet.</div>}</div>}</div>
 }
 
 function StatCard({ icon, label, value, detail, tone }: { icon: ReactNode; label: string; value: string; detail: string; tone: string }) {
