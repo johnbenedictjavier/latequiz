@@ -56,7 +56,7 @@ import { removeAvatar, signedAvatarUrl, uploadAvatar } from './lib/profile'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { deleteSubmission, loadAdminSubmissions, reviewSubmission } from './lib/submissions'
 import { sortStudents } from './lib/sorting'
-import { removeSubmissionImage, uploadSubmissionImage, validateSubmissionImage } from './lib/submissionUploads'
+import { removeSubmissionImage, signedSubmissionUrl, uploadSubmissionImage, validateSubmissionImage } from './lib/submissionUploads'
 import { isSubmitBlockedByUploads, LEGACY_UPLOAD_NOTICE, nextUploadCount, UPLOAD_ACCEPT, UPLOAD_HINT, uploadAnswerState, uploadDisplayName } from './lib/uploadAnswer'
 import { submitReupload } from './lib/reuploads'
 import { reuploadBannerRows, reuploadDeadlineLabel, reuploadPageState } from './lib/reuploadView'
@@ -665,6 +665,50 @@ type QuestionUploadContext = { attemptId: string | null; schoolId: string; onErr
 
 // Original names of images picked this session, keyed by object path (the path itself only holds a generated name).
 const uploadedFileNames = new Map<string, string>()
+// Local object URLs for images picked this session, keyed by object path. Lets the student preview
+// the exact image instantly without a network round-trip. Revoked when replaced or removed.
+const uploadedPreviewUrls = new Map<string, string>()
+
+function setUploadedPreview(path: string, file: File) {
+  const previous = uploadedPreviewUrls.get(path)
+  if (previous) URL.revokeObjectURL(previous)
+  uploadedPreviewUrls.set(path, URL.createObjectURL(file))
+}
+
+function clearUploadedPreview(path: string) {
+  const previous = uploadedPreviewUrls.get(path)
+  if (previous) URL.revokeObjectURL(previous)
+  uploadedPreviewUrls.delete(path)
+}
+
+/**
+ * Student-facing preview of an uploaded image answer so they can confirm they picked the right file.
+ * Prefers the instant local object URL for a file picked this session; otherwise (e.g. resuming an
+ * attempt) fetches a short-lived signed URL for the stored object, mirroring the admin SubmissionImage.
+ */
+function UploadPreview({ path }: { path: string }) {
+  const localUrl = uploadedPreviewUrls.get(path)
+  const [signedUrl, setSignedUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    if (localUrl) return
+    let active = true
+    setSignedUrl(null)
+    setFailed(false)
+    void signedSubmissionUrl(path).then(({ url, error }) => {
+      if (!active) return
+      if (url && !error) setSignedUrl(url)
+      else setFailed(true)
+    })
+    return () => { active = false }
+  }, [localUrl, path])
+
+  const url = localUrl ?? signedUrl
+  if (failed) return <p className="upload-status" role="status">Preview unavailable, but your image is saved.</p>
+  if (!url) return <p className="upload-status" role="status" aria-busy="true">Loading preview…</p>
+  return <figure className="upload-preview"><img src={url} alt="Preview of your uploaded answer" onError={() => setFailed(true)} /><figcaption><a href={url} target="_blank" rel="noopener noreferrer">Open full size</a></figcaption></figure>
+}
 
 function UploadAnswer({ question, value, onChange, upload }: { question: Question; value: string; onChange: (value: string) => void; upload?: QuestionUploadContext }) {
   const [busy, setBusy] = useState(false)
@@ -688,7 +732,9 @@ function UploadAnswer({ question, value, onChange, upload }: { question: Questio
     void run(async () => {
       const result = await uploadSubmissionImage({ attemptId, schoolId: upload.schoolId, questionId: question.id, file, previousPath: value || null })
       if (result.error || !result.path) return fail((result.error as Error | null)?.message ?? 'The image could not be uploaded.')
+      if (value && value !== result.path) clearUploadedPreview(value)
       uploadedFileNames.set(result.path, file.name)
+      setUploadedPreview(result.path, file)
       setError(null)
       onChange(result.path)
     })
@@ -696,16 +742,17 @@ function UploadAnswer({ question, value, onChange, upload }: { question: Questio
   const remove = () => {
     if (busy) return
     setError(null)
-    if (state !== 'stored' || !attemptId) return onChange('')
+    if (state !== 'stored' || !attemptId) { if (value) clearUploadedPreview(value); return onChange('') }
     void run(async () => {
       const result = await removeSubmissionImage({ attemptId, questionId: question.id, path: value })
       if (result.error) return fail((result.error as Error).message ?? 'The image could not be removed.')
       uploadedFileNames.delete(value)
+      clearUploadedPreview(value)
       onChange('')
     })
   }
   const disabled = !attemptId || busy
-  return <div className="upload-answer"><label className="upload-dropzone" htmlFor={inputId}><div className="upload-icon">{busy ? <LoaderCircle className="spin" size={23} /> : <FileUp size={23} />}</div><strong>{busy ? 'Uploading…' : state === 'empty' ? 'Choose your image' : 'Choose a different image'}</strong><span id={hintId}>{UPLOAD_HINT}</span><input id={inputId} type="file" accept={UPLOAD_ACCEPT} aria-describedby={hintId} disabled={disabled} onChange={pick} /></label>{!attemptId && <p className="upload-status" role="status">Connecting to your attempt. Uploads will be available in a moment.</p>}{busy && <p className="upload-status" role="status" aria-live="polite">Uploading…</p>}{error && <p className="upload-error" role="alert"><CircleAlert size={14} /> {error}</p>}{value && <div className={`uploaded-file ${state === 'legacy' ? 'uploaded-file-legacy' : ''}`}><span className="file-icon"><FileText size={17} /></span><div><strong>{uploadDisplayName(value, uploadedFileNames.get(value))}</strong><span>{state === 'legacy' ? LEGACY_UPLOAD_NOTICE : 'Uploaded and ready for submission'}</span></div><button className="icon-button" onClick={remove} disabled={busy} aria-label="Remove image"><X size={16} /></button></div>}</div>
+  return <div className="upload-answer"><label className="upload-dropzone" htmlFor={inputId}><div className="upload-icon">{busy ? <LoaderCircle className="spin" size={23} /> : <FileUp size={23} />}</div><strong>{busy ? 'Uploading…' : state === 'empty' ? 'Choose your image' : 'Choose a different image'}</strong><span id={hintId}>{UPLOAD_HINT}</span><input id={inputId} type="file" accept={UPLOAD_ACCEPT} aria-describedby={hintId} disabled={disabled} onChange={pick} /></label>{!attemptId && <p className="upload-status" role="status">Connecting to your attempt. Uploads will be available in a moment.</p>}{busy && <p className="upload-status" role="status" aria-live="polite">Uploading…</p>}{error && <p className="upload-error" role="alert"><CircleAlert size={14} /> {error}</p>}{value && <div className={`uploaded-file ${state === 'legacy' ? 'uploaded-file-legacy' : ''}`}><span className="file-icon"><FileText size={17} /></span><div><strong>{uploadDisplayName(value, uploadedFileNames.get(value))}</strong><span>{state === 'legacy' ? LEGACY_UPLOAD_NOTICE : 'Uploaded and ready for submission'}</span></div><button className="icon-button" onClick={remove} disabled={busy} aria-label="Remove image"><X size={16} /></button></div>}{value && state === 'stored' && <UploadPreview path={value} />}</div>
 }
 
 function QuestionInput({ question, value, onChange, upload }: { question: Question; value: string; onChange: (value: string) => void; upload?: QuestionUploadContext }) {
