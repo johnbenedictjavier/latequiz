@@ -172,6 +172,19 @@ export default function App() {
     setPendingQuiz(null)
   }
 
+  // After a first-login password change, the account's old session is invalidated server-side,
+  // so the stale token can no longer start or submit attempts. Sign out and route back to login
+  // so the student re-authenticates with the new password and gets a fresh, valid session.
+  const handlePasswordChanged = async () => {
+    const nextRoute: AuthRoute = role === 'admin' ? 'admin' : 'student'
+    await signOut()
+    clearSessionState()
+    setAdminView('overview')
+    setStudentView('dashboard')
+    navigateAuth(nextRoute)
+    notify({ tone: 'success', title: 'Password updated', message: 'Please sign in again with your new password.' })
+  }
+
   useEffect(() => {
     const onPopState = () => setAuthRoute(new URLSearchParams(window.location.search).get('role') === 'admin' || window.location.pathname.startsWith('/admin') ? 'admin' : 'student')
     window.addEventListener('popstate', onPopState)
@@ -354,7 +367,7 @@ export default function App() {
   }
 
   if (mustChangePassword) {
-     return <><PasswordChangePage role={role} student={student} onComplete={() => setMustChangePassword(false)} onLogout={handleLogout} notify={notify} />{toast && <Toast toast={toast} onClose={() => notify(null)} />}{showLogoutConfirm && <ConfirmModal title="Sign out of LateQuiz?" message="Your current session will be closed on this device." confirmLabel={isLoggingOut ? 'Signing out...' : 'Sign out'} onCancel={() => setShowLogoutConfirm(false)} onConfirm={() => void confirmLogout()} />}</>
+     return <><PasswordChangePage role={role} student={student} onComplete={() => void handlePasswordChanged()} onLogout={handleLogout} notify={notify} />{toast && <Toast toast={toast} onClose={() => notify(null)} />}{showLogoutConfirm && <ConfirmModal title="Sign out of LateQuiz?" message="Your current session will be closed on this device." confirmLabel={isLoggingOut ? 'Signing out...' : 'Sign out'} onCancel={() => setShowLogoutConfirm(false)} onConfirm={() => void confirmLogout()} />}</>
   }
 
   return <>
@@ -1595,7 +1608,6 @@ function PasswordChangePage({ role, student, onComplete, onLogout, notify }: { r
     const result = await changePassword(password)
     setIsSaving(false)
     if (result.error) return notify({ tone: 'warning', title: 'Password could not be changed', message: result.error.message })
-    notify({ tone: 'success', title: 'Password updated', message: 'Your account is ready.' })
     onComplete()
   }
   const name = student ? displayName(student).split(' ')[0] : 'there'
